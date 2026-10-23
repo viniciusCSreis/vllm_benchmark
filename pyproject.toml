@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vllm-benchmark"
+version = "0.1.0"
+description = "Run user-defined vLLM benchmark scenarios through Docker Compose."
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.12,<3", "PyYAML>=6", "requests>=2.26", "prometheus-client>=0.18", "matplotlib>=3.7"]
+
+[project.scripts]
+vllm_bench = "vllm_bench.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vllm_bench*"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
