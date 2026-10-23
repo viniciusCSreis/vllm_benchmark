@@ -11,8 +11,7 @@ from pathlib import Path
 from .artifacts import prepare_run, trials
 from .config import load_config, resolve_config
 from .progress import log
-from .providers import get_provider
-from .providers.compose import stop_saved
+from .providers import get_provider, stop_saved
 from .runner import run_trial, wait_healthy
 
 
@@ -162,7 +161,10 @@ def main():
                 state = json.loads(state_path.read_text())
                 directory = Path(state["directory"])
                 active = json.loads((directory / ".provider/client.json").read_text())
-                if (active["benchmark"], active["scenario"]) != (
+                if state.get("provider", "local") != config.provider or (
+                    active["benchmark"],
+                    active["scenario"],
+                ) != (
                     selection.benchmark,
                     args.scenario,
                 ):

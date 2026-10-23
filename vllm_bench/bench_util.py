@@ -73,7 +73,12 @@ def get_service_path(path):
     ]:
         local = Path(local).resolve()
         if path.is_relative_to(local):
-            return str(Path(remote) / path.relative_to(local))
+            destination = str(Path(remote) / path.relative_to(local))
+            if sandbox_id := context.get("modal_sandbox_id"):
+                from .providers.modal import upload_path
+
+                upload_path(sandbox_id, path, destination)
+            return destination
     raise ValueError(f"Path must be inside the project or trial directory: {path}")
 
 

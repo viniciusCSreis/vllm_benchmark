@@ -40,9 +40,19 @@ class BenchmarkScenarios(ConfigModel):
     scenarios: list[Scenario] = Field(min_length=1)
 
 
+class ModalSettings(ConfigModel):
+    app: str = "vllm-bench"
+    gpu: str | None = None
+    cpu: float = Field(default=8, gt=0)
+    memory: int = Field(default=16384, gt=0)
+    timeout: int = Field(default=14400, gt=0, le=86400)
+    cache_volume: str = "vllm-bench-model-cache"
+
+
 class Config(ConfigModel):
     name: Name
-    provider: Literal["local"] = "local"
+    provider: Literal["local", "modal"] = "local"
+    modal: ModalSettings = Field(default_factory=ModalSettings)
     base_image: str = Field(min_length=1)
     image_workdir: str = "/workspace/project"
     skip_volume_mount: bool = False
@@ -74,9 +84,7 @@ class Config(ConfigModel):
             *(benchmark.script for benchmark in self.benchmarks.values()),
         ]:
             if Path(path).is_absolute() or ".." in Path(path).parts:
-                raise ValueError(
-                    "Script paths must be relative to the project root"
-                )
+                raise ValueError("Script paths must be relative to the project root")
         return self
 
 
@@ -98,11 +106,25 @@ def merge_config(base, override):
     return merged
 
 
-def load_config(path):
+def read_config(path, seen=None):
     path = resolve_config(path)
-    base_path = path.parent / "base.yaml"
-    data = {}
-    if path != base_path and base_path.exists():
-        data = yaml.safe_load(base_path.read_text())
-    data = merge_config(data, yaml.safe_load(path.read_text()))
-    return Config.model_validate(data)
+    seen = set() if seen is None else seen
+    if path in seen:
+        raise ValueError(f"Config inheritance cycle: {path}")
+    seen.add(path)
+    data = yaml.safe_load(path.read_text())
+    parent = data.pop("extends", None)
+    if parent:
+        base = read_config(path.parent / parent, seen)
+    else:
+        base_path = path.parent / "base.yaml"
+        base = (
+            read_config(base_path, seen)
+            if path != base_path and base_path.exists()
+            else {}
+        )
+    return merge_config(base, data)
+
+
+def load_config(path):
+    return Config.model_validate(read_config(path))

@@ -53,3 +53,9 @@ runtime, throughput, cache hits, per-engine work, preemptions, engine activity,
 and GPU timelines. Comparisons group by benchmark and scenario, with means and
 sample standard deviations across successful repeats. Failed trials remain in
 tables and may appear in timelines. Reports read saved files only.
+
+Modal runs keep the same trial and report layout. `.provider/provider.json`
+records the sandbox ID, and `.provider/client.json` records public endpoints and
+remote path mappings. Service output and logs are downloaded into `services/`
+before reports run. If the sandbox exits before collection, `modal.log` preserves
+its available entrypoint logs and the trial is marked failed.

@@ -13,9 +13,8 @@ from ..artifacts import write_json
 from ..processes import running_process
 from ..progress import log
 from .base import Provider
-
-CONTAINER_TRIAL = Path("/run/vllm-bench/trial")
-CONTAINER_PROJECT = Path("/workspace/project")
+from .context import script_context, service_instances
+from .paths import CONTAINER_PROJECT, CONTAINER_TRIAL
 
 
 def compose(state, *arguments, stream=False):
@@ -73,32 +72,15 @@ class ComposeProvider(Provider):
     def start(self, trial, directory):
         if self.state_path.exists():
             raise RuntimeError("An environment is already active; run vllm_bench down")
-        scenario = next(
-            s
-            for s in self.config.benchmark_scenarios.scenarios
-            if s.name == trial.scenario
-        )
-        benchmark = self.config.benchmarks[trial.benchmark]
         log(f"Preparing Docker Compose with image: {self.config.base_image}")
-        instances = {}
-        for group in scenario.services:
+        instances = service_instances(self.config, trial)
+        for group in dict.fromkeys(item["group"] for item in instances.values()):
             service = self.config.services[group]
             devices = f"GPUs: {service.gpus}" if service.gpus else "no GPUs requested"
             log(
                 f"Service {group}: {service.replicas} replica(s), {devices}; "
                 f"startup: {service.startup_script}"
             )
-            for index in range(1, service.replicas + 1):
-                name = f"{group}-{index}"
-                instances[name] = {
-                    "name": name,
-                    "group": group,
-                    "role": service.role,
-                    "replica": index,
-                    "url": f"http://{name}:{service.health_port}",
-                    "health_path": service.health_path,
-                    "metrics_path": service.metrics_path,
-                }
         project = (
             Path(self.config.image_workdir)
             if self.config.skip_volume_mount
@@ -108,18 +90,7 @@ class ComposeProvider(Provider):
             log(f"Using project code already installed in the image at {project}.")
         else:
             log(f"Mounting project read-only: {self.root} -> {project}")
-        context = {
-            **trial.model_dump(),
-            "sample_interval": self.config.sample_interval,
-            "global_args": self.config.global_args,
-            "scenario_args": scenario.args,
-            "benchmark_args": benchmark.script_args,
-            "project_dir": str(project),
-            "service_project_dir": str(project),
-            "trial_dir": str(CONTAINER_TRIAL),
-            "services": list(instances.values()),
-            "internal_services": list(instances.values()),
-        }
+        context = script_context(self.config, trial, project, instances)
         compose_services = {}
         for name, instance in instances.items():
             service = self.config.services[instance["group"]]
@@ -192,6 +163,7 @@ class ComposeProvider(Provider):
             )
         )
         self.state = {
+            "provider": "local",
             "project": f"vllmbench-{uuid4().hex[:12]}",
             "compose_file": str(compose_file),
             "directory": str(directory),
