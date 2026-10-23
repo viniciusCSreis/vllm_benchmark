@@ -51,7 +51,9 @@ def wait_healthy(provider, endpoints, timeout):
 def run_trial(config, root, provider, trial, directory):
     directory.mkdir(parents=True)
     scenario = next(
-        item for item in config.benchmark_scenarios if item.name == trial.scenario
+        item
+        for item in config.benchmark_scenarios.scenarios
+        if item.name == trial.scenario
     )
     result = TrialResult(
         **trial.model_dump(),

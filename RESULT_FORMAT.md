@@ -3,7 +3,7 @@
 Runs are numbered per provider/experiment:
 `results/{provider}-{name}/run001/`, `run002/`, and so on.
 
-Each run saves effective `config.yaml`, `run.json` with expected trials and CLI
+Each run saves the merged base and benchmark settings as `config.yaml`, `run.json` with expected trials and CLI
 version/image reference, and `project.zip` plus SHA256 unless
 `skip_volume_mount: true`.
 

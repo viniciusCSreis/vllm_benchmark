@@ -15,40 +15,53 @@ Build the same package into your service image. Installing the CLI on the host
 alone does not make it available in containers. All image dependencies are
 installed during the image build, never by the provider at startup.
 
-See `../multi-worker-kalypso/config.yaml` and its `vllm_benchmark_config/README.md`
+See `../multi-worker-kalypso/.vllm_bench/configs/base.yaml` and its `.vllm_bench/README.md`
 for a complete integration with real service and benchmark scripts.
 
 ## Commands
 
-From a user project containing `config.yaml`:
+Each user project supplies `.vllm_bench/configs/base.yaml` and named benchmark
+configs in the same folder. Commands use the current working directory as the
+project root:
 
 ```bash
-vllm_bench up
+vllm_bench up --config example --scenario baseline
 vllm_bench down
-vllm_bench run scenarios
+vllm_bench run scenarios --config example
 vllm_bench report results/local-compare_coordinators/run001
 ```
 
-For a different config, put the global option before the command:
+`up` requires an explicit scenario and streams container logs during startup and
+while running. Ctrl+C stops the environment and saves its logs. Use `up -d` to
+start in the background:
 
 ```bash
-vllm_bench --config path/to/config.yaml run scenarios
+vllm_bench up --config example --scenario baseline -d
 ```
 
-`up` starts the first benchmark and scenario and streams container logs during
-startup and after health checks pass. Ctrl+C stops the environment and saves its
-logs. If an environment is already running, `up` attaches to its logs.
+`up` attaches to an existing environment only when its benchmark and scenario
+match. To switch to another environment, run `down` first. `down` also works
+when the config has since changed.
 
-Use `vllm_bench up -d` to start in the background. `down` stops those containers
-and saves their logs; it also works when the config has since changed.
+`run scenarios --config example` runs every scenario and repeat for the selected
+benchmark, starting fresh containers for every trial. It stops a previous `up`
+environment first. Failures preserve partial files and continue; Ctrl+C stops
+the experiment. Cleanup failures preserve recovery state for `down` and stop
+further scheduling. Reports run after cleanup and can be regenerated offline.
 
-`run scenarios` runs every benchmark × scenario × repeat sequentially, starting
-fresh containers for every trial. It stops a previous `up` environment first.
-Failures save partial files and continue to the next trial; Ctrl+C stops the
-experiment. Cleanup failures preserve recovery state for `down` and stop further
-scheduling. Reports run after cleanup and can also be regenerated offline.
+To run from another directory, pass the project root, not the config folder:
+
+```bash
+vllm_bench --current-dir /path/to/project up --config example --scenario baseline
+```
+
+`--current-dir` works before or after the command. It controls config lookup,
+script paths, project mounts, snapshots, results, and runtime state. Relative
+report paths also resolve from this root.
 
 ## Config
+
+`.vllm_bench/configs/base.yaml` contains shared settings, service definitions, and benchmark scripts:
 
 ```yaml
 name: comparison
@@ -77,16 +90,6 @@ benchmarks:
     script: scripts/benchmark.py
     script_args:
       dataset_percentage: 0.01
-    services: [leader, worker]
-
-benchmark_scenarios:
-  - name: baseline
-    args:
-      coordinator: single_worker
-    disabled_services: [worker]
-  - name: distributed
-    args:
-      coordinator: round_robin
 
 runs: 1
 startup_timeout: 1800
@@ -94,11 +97,39 @@ benchmark_timeout: 3600
 sample_interval: 1
 ```
 
-Names must use lowercase letters, digits, underscores, or hyphens, starting
-with a letter. Scenario and benchmark arguments are arbitrary project data.
-The CLI does not know about coordinators or dataset formats.
+`.vllm_bench/configs/example.yaml` selects one benchmark and declares every scenario's services:
 
-Script paths and the project root are relative to the config's directory.
+```yaml
+benchmark_scenarios:
+  benchmark: example
+  scenarios:
+    - name: baseline
+      args:
+        coordinator: single_worker
+      services: [leader]
+    - name: distributed
+      args:
+        coordinator: round_robin
+      services: [leader, worker]
+```
+
+`--config example` loads `.vllm_bench/configs/example.yaml` over its sibling
+`base.yaml`.
+Mappings merge recursively; child values and lists replace base values and lists.
+A YAML file path is also accepted. The option works before or after the command.
+Saved results contain the complete merged configuration.
+
+Without `--config`, the CLI reads `base.yaml`. A base without
+`benchmark_scenarios` cannot start an environment or a benchmark run. `up` also
+requires `--scenario`; it never silently chooses the first scenario.
+
+Scenario `services` is required and must be a nonempty list of known service
+names. Only listed services start. Each listed service expands to its configured
+replica count. The CLI does not infer dependencies or disable workers based on
+scenario arguments. Scenario and benchmark arguments are arbitrary project data.
+
+Names use lowercase letters, digits, underscores, or hyphens, starting with a
+letter. Script paths are relative to the project root.
 Each replica has its own container, published host port, and output directory.
 `health_path` defaults to `/health`; omit `metrics_path` for services without
 metrics. Startup scripts must bind to `0.0.0.0` at their configured health port.
@@ -160,7 +191,7 @@ samples are saved under `services/<group>-<replica>/`.
 
 The generated Compose file, resolved per-service contexts, and provider IDs are
 saved under the trial's `.provider/`. The active state is recorded under the
-project's `.vllm-bench/`. Host ports bind to `127.0.0.1` and container addresses
+project's `.vllm_bench/state.json`. Host ports bind to `127.0.0.1` and container addresses
 use Compose DNS. A named model-cache volume persists after `down`.
 
 By default, each run also saves a ZIP of nonignored project files. Results,

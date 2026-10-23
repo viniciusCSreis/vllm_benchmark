@@ -12,8 +12,9 @@ import yaml
 from pydantic import ValidationError
 
 from vllm_bench import bench_util
-from vllm_bench.artifacts import prepare_run
-from vllm_bench.config import Config
+from vllm_bench.artifacts import prepare_run, project_files
+from vllm_bench.cli import main
+from vllm_bench.config import Config, load_config
 from vllm_bench.contracts import Trial, TrialResult
 from vllm_bench.metrics import deltas, parse_metrics
 from vllm_bench.providers.compose import ComposeProvider
@@ -38,17 +39,22 @@ def config(**changes):
                     "metrics_path": "/metrics",
                 },
             },
-            "benchmarks": {
-                "first": {"script": "benchmark.py", "services": ["leader", "worker"]}
+            "benchmarks": {"first": {"script": "benchmark.py"}},
+            "benchmark_scenarios": {
+                "benchmark": "first",
+                "scenarios": [
+                    {
+                        "name": "baseline",
+                        "args": {"coordinator": "single_worker"},
+                        "services": ["leader"],
+                    },
+                    {
+                        "name": "distributed",
+                        "args": {"coordinator": "round_robin"},
+                        "services": ["leader", "worker"],
+                    },
+                ],
             },
-            "benchmark_scenarios": [
-                {
-                    "name": "baseline",
-                    "args": {"coordinator": "single_worker"},
-                    "disabled_services": ["worker"],
-                },
-                {"name": "distributed", "args": {"coordinator": "round_robin"}},
-            ],
             **changes,
         }
     )
@@ -59,14 +65,101 @@ class CliTests(unittest.TestCase):
         bench_util._context.cache_clear()
 
     def test_config_rejects_unknown_services_and_duplicate_scenarios(self):
+        for scenarios in [
+            [{"name": "test", "services": ["missing"]}],
+            [
+                {"name": "same", "services": ["leader"]},
+                {"name": "same", "services": ["leader"]},
+            ],
+            [{"name": "empty", "services": []}],
+            [{"name": "missing_services"}],
+            [{"name": "repeated", "services": ["leader", "leader"]}],
+        ]:
+            with self.subTest(scenarios=scenarios), self.assertRaises(ValidationError):
+                config(
+                    benchmark_scenarios={"benchmark": "first", "scenarios": scenarios}
+                )
         with self.assertRaises(ValidationError):
-            config(benchmarks={"test": {"script": "test.py", "services": ["missing"]}})
-        with self.assertRaises(ValidationError):
-            config(benchmark_scenarios=[{"name": "same"}, {"name": "same"}])
+            config(
+                benchmark_scenarios={
+                    "benchmark": "unknown",
+                    "scenarios": [{"name": "test", "services": ["leader"]}],
+                }
+            )
         with self.assertRaises(ValidationError):
             config(
                 services={"bad": {"role": "leader", "startup_script": "../secret.py"}}
             )
+
+    def test_named_config_inherits_base_and_merges_nested_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = config().model_dump(exclude_none=True)
+            selection = base.pop("benchmark_scenarios")
+            (root / "base.yaml").write_text(yaml.safe_dump(base))
+            (root / "first.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "global_args": {"max_model_len": 2048},
+                        "benchmark_scenarios": selection,
+                    }
+                )
+            )
+            self.assertIsNone(load_config(root / "base.yaml").benchmark_scenarios)
+            selected = load_config(root / "first")
+            self.assertEqual(
+                selected.global_args, {"model": "test-model", "max_model_len": 2048}
+            )
+            self.assertEqual(selected.benchmark_scenarios.benchmark, "first")
+            self.assertEqual(
+                selected.benchmark_scenarios.scenarios[0].services, ["leader"]
+            )
+
+    def test_current_dir_uses_project_configs_scripts_results_and_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            folder = root / ".vllm_bench/configs"
+            folder.mkdir(parents=True)
+            data = config().model_dump(exclude_none=True)
+            selection = data.pop("benchmark_scenarios")
+            (folder / "base.yaml").write_text(yaml.safe_dump(data))
+            (folder / "first.yaml").write_text(
+                yaml.safe_dump({"benchmark_scenarios": selection})
+            )
+            for script in ["leader.py", "benchmark.py"]:
+                (root / script).touch()
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "vllm_bench",
+                        "--current-dir",
+                        str(root),
+                        "up",
+                        "--config",
+                        "first",
+                        "--scenario",
+                        "baseline",
+                    ],
+                ),
+                patch("vllm_bench.cli.get_provider") as provider,
+                patch("vllm_bench.cli.show_environment", return_value=0),
+            ):
+                provider.return_value.start.return_value = (None, [])
+                self.assertEqual(main(), 0)
+                self.assertEqual(provider.call_args.args[1], root)
+                directory = provider.return_value.start.call_args.args[1]
+                self.assertTrue(directory.is_relative_to(root / "results"))
+            (root / ".vllm_bench/state.json").write_text("{}")
+            archived = {name for _, name in project_files(root)}
+            self.assertIn(".vllm_bench/configs/base.yaml", archived)
+            self.assertNotIn(".vllm_bench/state.json", archived)
+            with (
+                patch("sys.argv", ["vllm_bench", "down", "--current-dir", str(root)]),
+                patch("vllm_bench.cli.stop_saved") as stop,
+            ):
+                self.assertEqual(main(), 0)
+                stop.assert_called_once_with(root / ".vllm_bench/state.json")
 
     def test_snapshot_numbering_exclusions_and_skip_mount(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -80,7 +173,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(second.name, "run002")
             self.assertFalse((second / "project.zip").exists())
 
-    def test_topology_disables_workers_and_expands_replicas(self):
+    def test_scenario_selects_services_and_expands_replicas(self):
         for scenario, expected in [("baseline", 1), ("distributed", 3)]:
             with (
                 self.subTest(scenario=scenario),

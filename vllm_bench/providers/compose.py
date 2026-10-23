@@ -63,7 +63,7 @@ class ComposeProvider(Provider):
     def __init__(self, config, root):
         self.config = config
         self.root = root
-        self.state_path = root / ".vllm-bench/state.json"
+        self.state_path = root / ".vllm_bench/state.json"
         self.state = (
             json.loads(self.state_path.read_text())
             if self.state_path.exists()
@@ -74,15 +74,14 @@ class ComposeProvider(Provider):
         if self.state_path.exists():
             raise RuntimeError("An environment is already active; run vllm_bench down")
         scenario = next(
-            s for s in self.config.benchmark_scenarios if s.name == trial.scenario
+            s
+            for s in self.config.benchmark_scenarios.scenarios
+            if s.name == trial.scenario
         )
         benchmark = self.config.benchmarks[trial.benchmark]
         log(f"Preparing Docker Compose with image: {self.config.base_image}")
         instances = {}
-        for group in benchmark.services:
-            if group in scenario.disabled_services:
-                log(f"Skipping {group}: disabled by scenario '{scenario.name}'.")
-                continue
+        for group in scenario.services:
             service = self.config.services[group]
             devices = f"GPUs: {service.gpus}" if service.gpus else "no GPUs requested"
             log(

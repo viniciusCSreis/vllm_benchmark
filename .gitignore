@@ -7,3 +7,4 @@ dist/
 .wheels/
 .vllm-bench/
 results/
+.vllm_bench/state.json

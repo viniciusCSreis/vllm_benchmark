@@ -58,6 +58,8 @@ def project_files(root):
             names.extend(str((Path(folder) / name).relative_to(root)) for name in files)
     for name in sorted(set(names)):
         path = root / name
+        if name == ".vllm_bench/state.json":
+            continue
         if not name or not path.is_file() or path.is_symlink():
             continue
         if any(
@@ -72,10 +74,14 @@ def project_files(root):
 
 
 def trials(config):
+    selection = config.benchmark_scenarios
+    if selection is None:
+        raise ValueError(
+            "Select a config with benchmark_scenarios, e.g. --config medec"
+        )
     return [
-        Trial(benchmark=benchmark, scenario=scenario.name, repeat=repeat)
-        for benchmark in config.benchmarks
-        for scenario in config.benchmark_scenarios
+        Trial(benchmark=selection.benchmark, scenario=scenario.name, repeat=repeat)
+        for scenario in selection.scenarios
         for repeat in range(1, config.runs + 1)
     ]
 
