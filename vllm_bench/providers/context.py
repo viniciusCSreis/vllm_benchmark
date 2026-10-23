@@ -4,11 +4,7 @@ from .paths import CONTAINER_TRIAL
 
 
 def service_instances(config, trial, *, shared_network=False):
-    scenario = next(
-        s
-        for s in config.benchmarks[trial.benchmark].scenarios
-        if s.name == trial.scenario
-    )
+    scenario = config.get_scenario(trial.benchmark, trial.scenario)
     instances = {}
     for group in scenario.services:
         service = config.services[group]
@@ -29,15 +25,14 @@ def service_instances(config, trial, *, shared_network=False):
 
 
 def script_context(config, trial, project, instances):
-    scenario = next(
-        s
-        for s in config.benchmarks[trial.benchmark].scenarios
-        if s.name == trial.scenario
-    )
+    scenario = config.get_scenario(trial.benchmark, trial.scenario)
     return {
         **trial.model_dump(),
         "sample_interval": config.sample_interval,
         "global_args": config.global_args,
+        "service_args": {
+            group: config.services[group].service_args for group in scenario.services
+        },
         "scenario_args": scenario.args,
         "benchmark_args": config.benchmarks[trial.benchmark].script_args,
         "project_dir": str(project),

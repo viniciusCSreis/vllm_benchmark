@@ -5,7 +5,7 @@ library and the provider mounts `vllm_bench`; the image has no CLI installation.
 From this directory:
 
 ```bash
-vllm_bench run --benchmark example --scenario baseline
+vllm_bench run_scenarios --benchmark example --scenario baseline
 ```
 
 Results and reports appear in `results/local-example/run001/`.

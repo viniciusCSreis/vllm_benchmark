@@ -6,12 +6,13 @@ services:
     startup_script: startup.py
     health_port: 8000
     metrics_path: /metrics
+scenarios:
+  baseline:
+    services: [leader]
 benchmarks:
   example:
     script: benchmark.py
     scenarios:
-    - name: baseline
-      services:
-      - leader
+    - baseline
 startup_timeout: 60
 benchmark_timeout: 30

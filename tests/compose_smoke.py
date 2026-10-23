@@ -41,22 +41,15 @@ def main():
             }
             for name in ["leader", "worker"]
         },
+        "scenarios": {
+            "baseline": {"args": {"coordinator": "single"}, "services": ["leader"]},
+            "distributed": {
+                "args": {"coordinator": "distributed"},
+                "services": ["leader", "worker"],
+            },
+        },
         "benchmarks": {
-            name: {
-                "script": "benchmark.py",
-                "scenarios": [
-                    {
-                        "name": "baseline",
-                        "args": {"coordinator": "single"},
-                        "services": ["leader"],
-                    },
-                    {
-                        "name": "distributed",
-                        "args": {"coordinator": "distributed"},
-                        "services": ["leader", "worker"],
-                    },
-                ],
-            }
+            name: {"script": "benchmark.py", "scenarios": ["baseline", "distributed"]}
             for name in ["first", "second"]
         },
         "startup_timeout": 30,
@@ -87,7 +80,7 @@ def main():
         assert (root / ".vllm_bench/state.json").exists()
         cli("down")
         assert not (root / ".vllm_bench/state.json").exists()
-        cli("run", "--benchmark", "first", "--scenarios", "*")
+        cli("run_scenarios", "--benchmark", "first", "--scenarios", "*")
         output = root / "results/local-smoke/run002"
         records = json.loads((output / "reports/summary.json").read_text())
         assert len(records) == 2 and all(
@@ -106,7 +99,7 @@ def main():
                 0 if record["scenario"] == "baseline" else 1
             )
             assert record["engines"][0]["requests"] == 1, record
-        cli("run", "--benchmarks", "*", "--scenario", "baseline")
+        cli("run_scenarios", "--benchmarks", "*", "--scenario", "baseline")
         second = root / "results/local-smoke/run003"
         second_records = json.loads((second / "reports/summary.json").read_text())
         assert len(second_records) == 2 and all(
@@ -114,12 +107,12 @@ def main():
             for record in second_records
         ), second_records
         assert {record["benchmark"] for record in second_records} == {"first", "second"}
-        cli("run", "--benchmark", "*", "--scenario", "*")
+        cli("run_scenarios", "--benchmark", "*", "--scenario", "*")
         all_records = json.loads(
             (root / "results/local-smoke/run004/reports/summary.json").read_text()
         )
         assert len(all_records) == 4 and all(r["status"] == "ok" for r in all_records)
-        cli("run", "--benchmark", "*", "--scenario", "missing", expected=1)
+        cli("run_scenarios", "--benchmark", "*", "--scenario", "missing", expected=1)
         assert not (root / "results/local-smoke/run005").exists()
         assert (output / "reports/runtime.png").exists()
         assert (output / "reports/throughput.png").exists()
@@ -142,7 +135,7 @@ def main():
                 failure["benchmark_timeout"] = 0.2
             (config_dir / "failure.yaml").write_text(yaml.safe_dump(failure))
             cli(
-                "run",
+                "run_scenarios",
                 "--config",
                 "failure",
                 "--benchmark",
@@ -168,7 +161,7 @@ def main():
                     sys.executable,
                     "-m",
                     "vllm_bench.cli",
-                    "run",
+                    "run_scenarios",
                     "--benchmark",
                     "first",
                     "--scenario",

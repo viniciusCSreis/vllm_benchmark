@@ -16,6 +16,14 @@ def get_global_args():
     return dict(_context()["global_args"])
 
 
+def get_service_args(name=None):
+    """Global arguments with overrides for the current or named service group."""
+    if name is None and (service := get_service()):
+        name = service["group"]
+    overrides = _context()["service_args"][name] if name is not None else {}
+    return {**get_global_args(), **overrides}
+
+
 def get_global_arg(name, default=None):
     return _context()["global_args"].get(name, default)
 
@@ -67,6 +75,9 @@ def get_service_path(path):
     """Translate a client project/trial path into the path visible to services."""
     path = Path(path).resolve()
     context = _context()
+    if context.get("external_services"):
+        # External services may share the client's filesystem; no upload is implied.
+        return str(path)
     for local, remote in [
         (context["trial_dir"], "/run/vllm-bench/trial"),
         (context["project_dir"], context["service_project_dir"]),

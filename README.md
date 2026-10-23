@@ -1,6 +1,7 @@
 # vllm_bench
 
-Run user-defined vLLM benchmark scenarios through Docker Compose or Modal. Benchmark
+Run user-defined vLLM benchmarks against existing service URLs or with services
+managed through Docker Compose or Modal. Benchmark
 scripts and the runner execute on your machine; startup scripts execute in
 containers. The same Python library supplies arguments and service addresses to
 both. The provider owns service infrastructure; the runner and reports are shared.
@@ -34,7 +35,7 @@ image and no model download:
 
 ```bash
 cd examples/minimal
-vllm_bench run --benchmark example --scenario baseline
+vllm_bench run_scenarios --benchmark example --scenario baseline
 ```
 
 ## Commands and selection
@@ -44,19 +45,19 @@ A project supplies `.vllm_bench/configs/base.yaml` plus environment configs:
 is `local_cpu`; choose another with `--config`. Environment selection is separate
 from benchmark and scenario selection.
 
-Both `up` and `run` require `--benchmark` and `--scenario`. The plural aliases
+Both `up` and `run_scenarios` require `--benchmark` and `--scenario`. The plural aliases
 `--benchmarks` and `--scenarios` work too. Each accepts one or more names or `'*'`
 on its own. Quote the wildcard so your shell does not expand it into filenames.
 
 ```bash
 # Every scenario for one benchmark:
-vllm_bench run --config local_cpu --benchmark example --scenarios '*'
+vllm_bench run_scenarios --config local_cpu --benchmark example --scenarios '*'
 # A named scenario across all benchmarks:
-vllm_bench run --benchmark '*' --scenario baseline
+vllm_bench run_scenarios --benchmark '*' --scenario baseline
 # Every benchmark and its own scenarios:
-vllm_bench run --benchmark '*' --scenario '*'
+vllm_bench run_scenarios --benchmark '*' --scenario '*'
 # Explicit subsets:
-vllm_bench run --benchmark example other --scenario baseline distributed
+vllm_bench run_scenarios --benchmark example other --scenario baseline distributed
 # Start one environment and follow its logs:
 vllm_bench up --config local_cpu_arm --benchmark example --scenario baseline
 vllm_bench down
@@ -66,8 +67,8 @@ vllm_bench report results/local-comparison/run001
 A named scenario must exist in every selected benchmark. Unknown names fail
 before starting containers, stopping an active environment, or saving results.
 A scenario wildcard uses each benchmark's own scenarios; they need not match.
-`run` creates fresh services for every selected benchmark/scenario/repeat and
-then generates reports. The old `run scenarios` positional syntax is removed.
+`run_scenarios` creates fresh services for every selected benchmark/scenario/repeat and
+then generates reports. The former `run` command is now named `run_scenarios`.
 
 `up` must resolve to exactly one benchmark/scenario pair. It only attaches to an
 active environment when provider, image, benchmark, scenario, and arguments match.
@@ -76,7 +77,7 @@ Ctrl+C stops services and saves output. Use `up -d` to leave it running, then
 `down` to stop it. `down` uses saved state, and `report` uses its result directory,
 so neither needs benchmark/scenario selectors or an environment config.
 
-`run` stops an existing environment only after validating the complete selection.
+`run_scenarios` stops an existing environment only after validating the complete selection.
 Failures retain partial results and continue; Ctrl+C stops the experiment.
 Cleanup failures preserve recovery state for `down` and stop further scheduling.
 Reports can be regenerated offline.
@@ -84,11 +85,56 @@ Reports can be regenerated offline.
 `--current-dir /path/to/project` works before or after any command and sets the
 root for config lookup, scripts, snapshots, runtime state, and results. Relative
 report paths also resolve from this root. `--config` works before or after `up`
-or `run`; it accepts an environment name or YAML path.
+or `run_scenarios`; it accepts an environment name or YAML path.
+
+## Run against existing services
+
+`run_only` executes exactly one benchmark/scenario once, regardless of `runs`.
+It does not start, stop, reconfigure, or restart services, and leaves any active
+`up` environment and its state file untouched. It uses the same benchmark executor
+and report format as `run_scenarios`. Managed runs use the startup/readiness
+routine shared with `up` and the provider shutdown used by `down` after each trial,
+including failed trials.
+
+```bash
+vllm_bench run_only --config local_cpu \
+  --benchmark example --scenario baseline \
+  --service-url leader=https://example.com:8000
+```
+
+Repeat `--service-url NAME=URL` for each required service. Names match the config's
+`services` keys. Supply every service selected by the scenario and benchmark
+service dependencies; unknown, duplicate, and missing names fail before execution.
+URLs must be HTTP(S) base URLs, including any reverse-proxy prefix. Each supplied
+service group describes one external endpoint; `replicas` controls managed services
+only. The client uses the supplied URLs for health checks, metrics, and benchmark
+requests. `internal=True` returns the same URLs in this mode, so services that call
+each other must also be able to reach those addresses.
+
+Only benchmark scripts need to exist locally. An external-only config can omit
+`base_image` and service `startup_script`; `up` and `run_scenarios` still require
+those fields. Set `global_args` and `service_args` to match the models already
+served. Selecting a scenario records its arguments; it does not change the remote
+server's coordinator or model. The old `run` command has been renamed to
+`run_scenarios`.
+
+Results are saved under `results/external-<name>/runNNN/`, with one trial,
+endpoint URLs, the client context, logs, metrics, and reports. External runs do not
+upload a project snapshot, transfer inputs, or collect server logs/GPU samples.
+When the client and servers share a filesystem, `get_service_path()` returns the
+local path unchanged. For cloud deployments, make inputs available to the servers
+first; `--dataset-path /server/path` passes that value as the benchmark's
+`dataset_path` argument. Your benchmark adapter decides how to use it.
+
+After health checks pass, `up` prints a copyable `run_only` command before the
+endpoint and log details, including the selected config, project, benchmark,
+scenario, and service URLs. You can start an environment with `up -d`, then run
+that command as often as needed before stopping it with `down`. Supply dataset paths
+visible to that existing environment when it cannot access the client's paths.
 
 ## Configuration
 
-`base.yaml` defines services and every benchmark's own scenarios. For example:
+`base.yaml` defines shared services and scenarios. Benchmarks reference scenario names. For example:
 
 ```yaml
 name: comparison
@@ -103,20 +149,21 @@ services:
     startup_script: scripts/start_worker.py
     health_port: 8000
     metrics_path: /metrics
+scenarios:
+  baseline:
+    args:
+      coordinator: single_worker
+    services: [leader]
+  distributed:
+    args:
+      coordinator: round_robin
+    services: [leader, worker]
 benchmarks:
   example:
     script: scripts/benchmark.py
     script_args:
-      dataset_percentage: 0.01
-    scenarios:
-      - name: baseline
-        args:
-          coordinator: single_worker
-        services: [leader]
-      - name: distributed
-        args:
-          coordinator: round_robin
-        services: [leader, worker]
+      dataset_percentage: 0.1
+    scenarios: [baseline, distributed]
 runs: 1
 startup_timeout: 1800
 benchmark_timeout: 3600
@@ -136,13 +183,14 @@ global_args:
 An environment config automatically merges over its sibling `base.yaml`.
 Mappings merge recursively; child lists and scalar values replace base values.
 `extends: other_config` can inherit another environment before applying overrides.
-Saved runs contain the resolved environment and only the selected benchmarks and
-scenarios. There are no separate benchmark YAML files or `benchmark_scenarios` field.
+Saved runs contain the resolved environment, shared scenario definitions, and
+selected benchmarks with their selected scenario references. There are no separate benchmark YAML files or `benchmark_scenarios` field.
 
-Scenario names are unique within a benchmark, and may repeat across benchmarks.
-Every scenario declares a nonempty list of known service names. Only listed
-services start, each expanded to its replica count. The CLI does not infer
-service dependencies. Scenario and benchmark arguments are arbitrary project data.
+Scenarios are defined once in the top-level `scenarios` mapping. Each benchmark
+selects a nonempty list of unique scenario names. Every scenario declares a
+nonempty list of known service names. A benchmark may also declare `services: [icp]` to add dependencies to every selected scenario. The CLI combines both
+service lists, removes overlaps, and expands each service to its replica count.
+Scenario and benchmark arguments are arbitrary project data.
 Names use lowercase letters, digits, underscores, or hyphens, starting with a
 letter. Script paths are relative to the project root.
 
@@ -151,6 +199,10 @@ Optional settings:
 - Service `replicas`: number of instances; defaults to one.
 - Service `gpus: all` or `gpus: ["0"]`: local NVIDIA GPU allocation. Omit for CPU.
 - Service `environment`: extra string environment values.
+- Service `service_args`: arguments that override `global_args` for that service.
+  Startup scripts use `bench_util.get_service_args()` to read the merged values;
+  clients can use `bench_util.get_service_args("cascade")` for a named service.
+  Unspecified arguments inherit global values; `get_global_args()` stays unchanged.
 - Service `health_path`: defaults to `/health`; omit `metrics_path` if unavailable.
 - `skip_volume_mount: true`: use project code already inside the image.
 - `image_workdir`: project directory for that mode; defaults to `/workspace/project`.
@@ -179,7 +231,7 @@ modal:
 ```
 
 ```bash
-vllm_bench run --config modal --benchmark example --scenario '*'
+vllm_bench run_scenarios --config modal --benchmark example --scenario '*'
 vllm_bench up --config modal --benchmark example --scenario baseline
 vllm_bench down
 ```
@@ -206,7 +258,7 @@ saved as `modal.log`; service files may no longer be available.
 from vllm_bench import bench_util
 
 model = bench_util.get_global_arg("model")
-options = bench_util.get_global_args()
+options = bench_util.get_service_args()
 coordinator = bench_util.get_scenario_arg("coordinator")
 fraction = bench_util.get_benchmark_arg("dataset_percentage", 1.0)
 repeat = bench_util.current_run

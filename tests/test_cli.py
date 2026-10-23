@@ -40,21 +40,20 @@ def config(**changes):
                     "metrics_path": "/metrics",
                 },
             },
+            "scenarios": {
+                "baseline": {
+                    "args": {"coordinator": "single_worker"},
+                    "services": ["leader"],
+                },
+                "distributed": {
+                    "args": {"coordinator": "round_robin"},
+                    "services": ["leader", "worker"],
+                },
+            },
             "benchmarks": {
                 "first": {
                     "script": "benchmark.py",
-                    "scenarios": [
-                        {
-                            "name": "baseline",
-                            "args": {"coordinator": "single_worker"},
-                            "services": ["leader"],
-                        },
-                        {
-                            "name": "distributed",
-                            "args": {"coordinator": "round_robin"},
-                            "services": ["leader", "worker"],
-                        },
-                    ],
+                    "scenarios": ["baseline", "distributed"],
                 },
             },
             **changes,
@@ -68,21 +67,28 @@ class CliTests(unittest.TestCase):
 
     def test_config_rejects_unknown_services_and_duplicate_scenarios(self):
         for scenarios in [
-            [{"name": "test", "services": ["missing"]}],
-            [
-                {"name": "same", "services": ["leader"]},
-                {"name": "same", "services": ["leader"]},
-            ],
-            [{"name": "empty", "services": []}],
-            [{"name": "missing_services"}],
-            [{"name": "repeated", "services": ["leader", "leader"]}],
+            {"test": {"services": ["missing"]}},
+            {"empty": {"services": []}},
+            {"missing_services": {}},
+            {"repeated": {"services": ["leader", "leader"]}},
         ]:
             with self.subTest(scenarios=scenarios), self.assertRaises(ValidationError):
+                config(scenarios=scenarios)
+        for names in [["baseline", "baseline"], ["missing"]]:
+            with self.subTest(names=names), self.assertRaises(ValidationError):
                 config(
-                    benchmarks={
-                        "first": {"script": "benchmark.py", "scenarios": scenarios}
-                    }
+                    benchmarks={"first": {"script": "benchmark.py", "scenarios": names}}
                 )
+        with self.assertRaises(ValidationError):
+            config(
+                benchmarks={
+                    "first": {
+                        "script": "benchmark.py",
+                        "scenarios": ["baseline"],
+                        "services": ["missing"],
+                    }
+                }
+            )
         with self.assertRaises(ValidationError):
             config(
                 services={"bad": {"role": "leader", "startup_script": "../secret.py"}}
@@ -105,7 +111,7 @@ class CliTests(unittest.TestCase):
                 selected.global_args, {"model": "test-model", "max_model_len": 2048}
             )
             self.assertEqual(
-                selected.benchmarks["first"].scenarios[0].services, ["leader"]
+                selected.get_scenario("first", "baseline").services, ["leader"]
             )
 
     def test_current_dir_uses_project_configs_scripts_results_and_state(self):
@@ -157,12 +163,11 @@ class CliTests(unittest.TestCase):
 
     def test_select_multiple_benchmarks_and_scenarios(self):
         data = config().model_dump()
+        data["scenarios"]["other"] = {"services": ["worker"]}
         data["benchmarks"]["second"] = {
             "script": "other.py",
-            "scenarios": [
-                {"name": "baseline", "services": ["worker"]},
-                {"name": "other", "services": ["leader"]},
-            ],
+            "scenarios": ["baseline", "other"],
+            "services": ["worker", "leader"],
         }
         settings = Config.model_validate(data)
         selected = select_benchmarks(settings, ["*"], ["baseline"])
@@ -172,9 +177,10 @@ class CliTests(unittest.TestCase):
         )
         second = Trial(benchmark="second", scenario="baseline", repeat=1)
         instances = service_instances(selected, second)
-        self.assertEqual(list(instances), ["worker-1", "worker-2"])
+        self.assertEqual(list(instances), ["leader-1", "worker-1", "worker-2"])
+        self.assertEqual(settings.scenarios["baseline"].services, ["leader"])
         context = script_context(selected, second, Path("/project"), instances)
-        self.assertEqual(context["scenario_args"], {})
+        self.assertEqual(context["scenario_args"], {"coordinator": "single_worker"})
         self.assertEqual(len(trials(select_benchmarks(settings, ["*"], ["*"]))), 4)
         self.assertEqual(
             [
@@ -198,15 +204,15 @@ class CliTests(unittest.TestCase):
             data = config().model_dump()
             data["benchmarks"]["second"] = {
                 "script": "second.py",
-                "scenarios": [{"name": "baseline", "services": ["worker"]}],
+                "scenarios": ["baseline"],
             }
             (folder / "base.yaml").write_text(yaml.safe_dump(data))
             (folder / "local_cpu.yaml").write_text("{}\n")
             state = root / ".vllm_bench/state.json"
             state.write_text("active")
             for command, scenarios in [
-                ("run", "missing"),
-                ("run", "distributed"),
+                ("run_scenarios", "missing"),
+                ("run_scenarios", "distributed"),
                 ("up", "*"),
             ]:
                 with (
@@ -389,6 +395,34 @@ class CliTests(unittest.TestCase):
                     bench_util.get_service_path(directory / "inputs/file.csv"),
                     "/run/vllm-bench/trial/inputs/file.csv",
                 )
+
+    def test_service_args_override_globals_without_affecting_other_services(self):
+        data = config().model_dump()
+        data["global_args"].update(max_model_len=8192, max_num_seqs=2)
+        data["services"]["leader"]["service_args"] = {
+            "model": "helper-model",
+            "max_num_seqs": 1,
+        }
+        settings = Config.model_validate(data)
+        trial = Trial(benchmark="first", scenario="distributed", repeat=1)
+        for shared_network in [False, True]:
+            instances = service_instances(
+                settings, trial, shared_network=shared_network
+            )
+            context = script_context(settings, trial, Path("/project"), instances)
+            with patch.object(bench_util, "_context", return_value=context):
+                leader = bench_util.get_service_args("leader")
+                self.assertEqual(leader["model"], "helper-model")
+                self.assertEqual(leader["max_num_seqs"], 1)
+                self.assertEqual(leader["max_model_len"], 8192)
+                self.assertEqual(
+                    bench_util.get_service_args("worker"), settings.global_args
+                )
+                context["service"] = instances["leader-1"]
+                self.assertEqual(bench_util.get_service_args(), leader)
+                leader["max_model_len"] = 1
+                self.assertEqual(bench_util.get_global_arg("max_model_len"), 8192)
+                self.assertEqual(bench_util.get_global_arg("model"), "test-model")
 
     def test_missing_metrics_and_counter_resets_are_not_zero(self):
         self.assertEqual(

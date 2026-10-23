@@ -27,7 +27,8 @@ def wait_healthy(provider, endpoints, timeout):
     with requests.Session() as session:
         session.trust_env = False
         while pending:
-            provider.check_running()
+            if provider is not None:
+                provider.check_running()
             for name, url in list(pending.items()):
                 try:
                     if session.get(url, timeout=2).status_code == 200:
@@ -48,13 +49,19 @@ def wait_healthy(provider, endpoints, timeout):
                 time.sleep(0.5)
 
 
-def run_trial(config, root, provider, trial, directory):
-    directory.mkdir(parents=True)
-    scenario = next(
-        item
-        for item in config.benchmarks[trial.benchmark].scenarios
-        if item.name == trial.scenario
-    )
+def start_environment(config, provider, trial, directory, *, wait=True):
+    """Shared startup and readiness checks for up and managed trials."""
+    directory.mkdir(parents=True, exist_ok=True)
+    context, endpoints = provider.start(trial, directory)
+    if wait:
+        wait_healthy(provider, endpoints, config.startup_timeout)
+    return context, endpoints
+
+
+def run_only(config, root, trial, directory, context, endpoints, *, provider=None):
+    """Execute one trial against supplied endpoints without changing services."""
+    directory.mkdir(parents=True, exist_ok=True)
+    scenario = config.get_scenario(trial.benchmark, trial.scenario)
     result = TrialResult(
         **trial.model_dump(),
         global_args=config.global_args,
@@ -63,8 +70,8 @@ def run_trial(config, root, provider, trial, directory):
     samples = []
     print(f"Running {trial.benchmark}/{trial.scenario}/{trial.repeat}", flush=True)
     try:
-        context, endpoints = provider.start(trial, directory)
-        wait_healthy(provider, endpoints, config.startup_timeout)
+        if provider is None:
+            wait_healthy(None, endpoints, config.startup_timeout)
         metrics = {
             item["name"]: item["url"] + item["metrics_path"]
             for item in endpoints
@@ -81,7 +88,8 @@ def run_trial(config, root, provider, trial, directory):
                 ) as process:
                     deadline = time.monotonic() + config.benchmark_timeout
                     while process.poll() is None:
-                        provider.check_running()
+                        if provider is not None:
+                            provider.check_running()
                         if time.monotonic() >= deadline:
                             raise TimeoutError("Benchmark timed out")
                         try:
@@ -111,6 +119,35 @@ def run_trial(config, root, provider, trial, directory):
         result.error = str(exc)
         print(f"Trial failed: {exc}", flush=True)
     finally:
+        if samples:
+            before, after = samples[0]["engines"], samples[-1]["engines"]
+            (directory / "metrics_before.json").write_text(json.dumps(before, indent=2))
+            (directory / "metrics_after.json").write_text(json.dumps(after, indent=2))
+            if result.runtime_sec:
+                result.engines = deltas(before, after, result.runtime_sec)
+        result.save(directory)
+    return result
+
+
+def run_trial(config, root, provider, trial, directory):
+    """Create fresh services, run the shared executor, then stop the services."""
+    directory.mkdir(parents=True, exist_ok=True)
+    result = TrialResult(
+        **trial.model_dump(),
+        global_args=config.global_args,
+        scenario_args=config.get_scenario(trial.benchmark, trial.scenario).args,
+    )
+    try:
+        context, endpoints = start_environment(config, provider, trial, directory)
+        result = run_only(
+            config, root, trial, directory, context, endpoints, provider=provider
+        )
+    except KeyboardInterrupt:
+        result.status, result.error = "cancelled", "Interrupted"
+    except Exception as exc:
+        result.error = str(exc)
+        log(f"Trial startup failed: {exc}")
+    finally:
         try:
             provider.stop()
         except Exception as exc:
@@ -118,11 +155,5 @@ def run_trial(config, root, provider, trial, directory):
             result.error = (
                 f"{result.error + '; ' if result.error else ''}Cleanup failed: {exc}"
             )
-        if samples:
-            before, after = samples[0]["engines"], samples[-1]["engines"]
-            (directory / "metrics_before.json").write_text(json.dumps(before, indent=2))
-            (directory / "metrics_after.json").write_text(json.dumps(after, indent=2))
-            if result.runtime_sec:
-                result.engines = deltas(before, after, result.runtime_sec)
         result.save(directory)
     return result

@@ -68,7 +68,7 @@ def project_files(root):
 
 def trials(config):
     return [
-        Trial(benchmark=name, scenario=scenario.name, repeat=repeat)
+        Trial(benchmark=name, scenario=scenario, repeat=repeat)
         for name, benchmark in config.benchmarks.items()
         for scenario in benchmark.scenarios
         for repeat in range(1, config.runs + 1)
