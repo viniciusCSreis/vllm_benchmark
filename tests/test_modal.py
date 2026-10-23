@@ -22,19 +22,18 @@ class ModalTests(unittest.TestCase):
     def tearDown(self):
         bench_util._context.cache_clear()
 
-    def test_config_extends_benchmark_and_preserves_shared_settings(self):
+    def test_config_extends_environment_and_preserves_benchmarks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             base = config().model_dump(exclude_none=True)
-            selection = base.pop("benchmark_scenarios")
             (root / "base.yaml").write_text(yaml.safe_dump(base))
-            (root / "medec.yaml").write_text(
-                yaml.safe_dump({"benchmark_scenarios": selection})
+            (root / "local_cpu.yaml").write_text(
+                yaml.safe_dump({"global_args": {"model": "test-model"}})
             )
             (root / "modal.yaml").write_text(
                 yaml.safe_dump(
                     {
-                        "extends": "medec",
+                        "extends": "local_cpu",
                         "provider": "modal",
                         "modal": {"gpu": "T4:1"},
                     }
@@ -44,10 +43,36 @@ class ModalTests(unittest.TestCase):
             self.assertEqual(loaded.provider, "modal")
             self.assertEqual(loaded.modal.gpu, "T4:1")
             self.assertEqual(loaded.global_args, base["global_args"])
-            self.assertEqual(len(loaded.benchmark_scenarios.scenarios), 2)
-            (root / "medec.yaml").write_text("extends: modal\n")
+            self.assertEqual(len(loaded.benchmarks["first"].scenarios), 2)
+            (root / "local_cpu.yaml").write_text("extends: modal\n")
             with self.assertRaisesRegex(ValueError, "cycle"):
                 load_config(root / "modal")
+
+    def test_unavailable_sandbox_saves_logs_and_removes_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state_path = root / "state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "provider": "modal",
+                        "sandbox_id": "sb-test",
+                        "directory": str(root),
+                    }
+                )
+            )
+            sandbox = MagicMock()
+            sandbox.poll.side_effect = RuntimeError("The Sandbox is unavailable")
+            sandbox.stdout.read.return_value = "service startup\n"
+            sandbox.stderr.read.return_value = "Runner exceeded its memory request\n"
+            sandbox.terminate.side_effect = RuntimeError("Already stopped")
+            sdk = MagicMock()
+            sdk.Sandbox.from_id.return_value = sandbox
+            with patch("vllm_bench.providers.modal.modal_sdk", return_value=sdk):
+                with self.assertRaises(RuntimeError):
+                    stop_saved(state_path)
+            self.assertIn("memory request", (root / "modal.log").read_text())
+            self.assertFalse(state_path.exists())
 
     def test_modal_lifecycle_and_generated_inputs(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -80,6 +105,16 @@ class ModalTests(unittest.TestCase):
                 )
                 creation = sdk.Sandbox.create.call_args.kwargs
                 self.assertEqual(creation["gpu"], "T4:1")
+                self.assertEqual(list(creation["volumes"]), ["/mnt/vllm-bench-cache"])
+                self.assertEqual(
+                    creation["env"]["HF_HOME"], "/mnt/vllm-bench-cache/huggingface"
+                )
+                self.assertEqual(
+                    creation["env"]["VLLM_CACHE_ROOT"], "/mnt/vllm-bench-cache/vllm"
+                )
+                self.assertEqual(
+                    creation["env"]["XDG_CACHE_HOME"], "/mnt/vllm-bench-cache"
+                )
                 self.assertEqual(creation["encrypted_ports"], [8000, 8001, 8002])
                 self.assertEqual(len(endpoints), 3)
                 data = json.loads(context.read_text())

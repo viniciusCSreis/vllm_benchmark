@@ -5,7 +5,9 @@ from .paths import CONTAINER_TRIAL
 
 def service_instances(config, trial, *, shared_network=False):
     scenario = next(
-        s for s in config.benchmark_scenarios.scenarios if s.name == trial.scenario
+        s
+        for s in config.benchmarks[trial.benchmark].scenarios
+        if s.name == trial.scenario
     )
     instances = {}
     for group in scenario.services:
@@ -28,7 +30,9 @@ def service_instances(config, trial, *, shared_network=False):
 
 def script_context(config, trial, project, instances):
     scenario = next(
-        s for s in config.benchmark_scenarios.scenarios if s.name == trial.scenario
+        s
+        for s in config.benchmarks[trial.benchmark].scenarios
+        if s.name == trial.scenario
     )
     return {
         **trial.model_dump(),

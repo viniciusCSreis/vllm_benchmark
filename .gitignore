@@ -8,3 +8,4 @@ dist/
 .vllm-bench/
 results/
 .vllm_bench/state.json
+.ruff_cache/

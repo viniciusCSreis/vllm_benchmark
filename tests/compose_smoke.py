@@ -1,7 +1,7 @@
 """Opt-in real Compose check with tiny HTTP engines, no models or cloud jobs.
 
-Run: python tests/compose_smoke.py --image kalypso-vllm-benchmark:local
-The image must already contain this package and its dependencies.
+Run: python tests/compose_smoke.py --image python:3.12-slim
+The provider mounts this package; the image only needs Python 3.11 or newer.
 """
 
 import argparse
@@ -42,22 +42,22 @@ def main():
             for name in ["leader", "worker"]
         },
         "benchmarks": {
-            name: {"script": "benchmark.py"} for name in ["first", "second"]
-        },
-        "benchmark_scenarios": {
-            "benchmark": "first",
-            "scenarios": [
-                {
-                    "name": "baseline",
-                    "args": {"coordinator": "single"},
-                    "services": ["leader"],
-                },
-                {
-                    "name": "distributed",
-                    "args": {"coordinator": "distributed"},
-                    "services": ["leader", "worker"],
-                },
-            ],
+            name: {
+                "script": "benchmark.py",
+                "scenarios": [
+                    {
+                        "name": "baseline",
+                        "args": {"coordinator": "single"},
+                        "services": ["leader"],
+                    },
+                    {
+                        "name": "distributed",
+                        "args": {"coordinator": "distributed"},
+                        "services": ["leader", "worker"],
+                    },
+                ],
+            }
+            for name in ["first", "second"]
         },
         "startup_timeout": 30,
         "benchmark_timeout": 10,
@@ -65,19 +65,8 @@ def main():
     }
     config_dir = root / ".vllm_bench/configs"
     config_dir.mkdir(parents=True)
-    base = copy.deepcopy(config)
-    base.pop("benchmark_scenarios")
-    (config_dir / "base.yaml").write_text(yaml.safe_dump(base))
-    for benchmark in config["benchmarks"]:
-        selection = copy.deepcopy(config["benchmark_scenarios"])
-        selection["benchmark"] = benchmark
-        (config_dir / f"{benchmark}.yaml").write_text(
-            yaml.safe_dump(
-                {
-                    "benchmark_scenarios": selection,
-                }
-            )
-        )
+    (config_dir / "base.yaml").write_text(yaml.safe_dump(config))
+    (config_dir / "local_cpu.yaml").write_text("{}\n")
 
     def cli(*command, expected=0):
         result = subprocess.run(
@@ -94,11 +83,11 @@ def main():
         assert result.returncode == expected, result.returncode
 
     try:
-        cli("up", "--config", "first", "--scenario", "baseline", "-d")
+        cli("up", "--benchmark", "first", "--scenario", "baseline", "-d")
         assert (root / ".vllm_bench/state.json").exists()
         cli("down")
         assert not (root / ".vllm_bench/state.json").exists()
-        cli("run", "scenarios", "--config", "first")
+        cli("run", "--benchmark", "first", "--scenarios", "*")
         output = root / "results/local-smoke/run002"
         records = json.loads((output / "reports/summary.json").read_text())
         assert len(records) == 2 and all(
@@ -117,13 +106,21 @@ def main():
                 0 if record["scenario"] == "baseline" else 1
             )
             assert record["engines"][0]["requests"] == 1, record
-        cli("run", "scenarios", "--config", "second")
+        cli("run", "--benchmarks", "*", "--scenario", "baseline")
         second = root / "results/local-smoke/run003"
         second_records = json.loads((second / "reports/summary.json").read_text())
         assert len(second_records) == 2 and all(
-            record["benchmark"] == "second" and record["status"] == "ok"
+            record["scenario"] == "baseline" and record["status"] == "ok"
             for record in second_records
         ), second_records
+        assert {record["benchmark"] for record in second_records} == {"first", "second"}
+        cli("run", "--benchmark", "*", "--scenario", "*")
+        all_records = json.loads(
+            (root / "results/local-smoke/run004/reports/summary.json").read_text()
+        )
+        assert len(all_records) == 4 and all(r["status"] == "ok" for r in all_records)
+        cli("run", "--benchmark", "*", "--scenario", "missing", expected=1)
+        assert not (root / "results/local-smoke/run005").exists()
         assert (output / "reports/runtime.png").exists()
         assert (output / "reports/throughput.png").exists()
         cli("report", str(output))
@@ -133,8 +130,8 @@ def main():
             failure = copy.deepcopy(config)
             failure["name"] = name
             failure["benchmarks"] = {"first": failure["benchmarks"]["first"]}
-            failure["benchmark_scenarios"]["scenarios"] = failure[
-                "benchmark_scenarios"
+            failure["benchmarks"]["first"]["scenarios"] = failure["benchmarks"][
+                "first"
             ]["scenarios"][:1]
             if name == "startup_failure":
                 failure["global_args"]["fail_startup"] = True
@@ -144,7 +141,16 @@ def main():
                 failure["benchmarks"]["first"]["script_args"] = {"delay": 10}
                 failure["benchmark_timeout"] = 0.2
             (config_dir / "failure.yaml").write_text(yaml.safe_dump(failure))
-            cli("run", "scenarios", "--config", "failure", expected=1)
+            cli(
+                "run",
+                "--config",
+                "failure",
+                "--benchmark",
+                "first",
+                "--scenario",
+                "baseline",
+                expected=1,
+            )
             saved = root / f"results/local-{name}/run001"
             record = json.loads((saved / "reports/summary.json").read_text())[0]
             assert record["status"] == "failed" and record["error"], record
@@ -163,7 +169,10 @@ def main():
                     "-m",
                     "vllm_bench.cli",
                     "run",
-                    "scenarios",
+                    "--benchmark",
+                    "first",
+                    "--scenario",
+                    "baseline",
                     "--config",
                     "cancellation",
                 ],

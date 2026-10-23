@@ -1,0 +1,5 @@
+include LICENSE README.md RESULT_FORMAT.md PUBLISHING.md
+recursive-include examples *.py *.yaml *.md
+recursive-include tests *.py
+prune examples/minimal/results
+global-exclude __pycache__ *.py[cod]

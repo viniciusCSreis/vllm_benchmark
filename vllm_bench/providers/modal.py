@@ -17,6 +17,7 @@ from .context import script_context, service_instances
 from .paths import CONTAINER_PROJECT, CONTAINER_TRIAL
 
 CONTROL = CONTAINER_TRIAL / ".provider"
+CACHE = Path("/mnt/vllm-bench-cache")
 
 
 def modal_sdk():
@@ -81,7 +82,7 @@ def stop_saved(state_path):
             log("Downloading Modal service output and logs...")
             remote_command(
                 sandbox,
-                "python",
+                "python3",
                 "-c",
                 "import shutil; shutil.make_archive('/tmp/vllm-bench-output', 'zip', "
                 "'/run/vllm-bench/trial', 'services')",
@@ -92,15 +93,24 @@ def stop_saved(state_path):
                 bundle.extractall(directory)
             archive.unlink()
         else:
-            (directory / "modal.log").write_text(
-                sandbox.stdout.read() + sandbox.stderr.read()
-            )
             raise RuntimeError(
                 "Modal sandbox exited before output could be collected; see modal.log"
             )
+    except Exception:
+        # Filesystem access (or even poll) can race with an OOM termination.
+        # Modal's output streams can still contain the reason for the shutdown.
+        try:
+            (directory / "modal.log").write_text(
+                sandbox.stdout.read() + sandbox.stderr.read()
+            )
+        except Exception as exc:
+            log(f"Could not download Modal logs: {exc}")
+        raise
     finally:
-        sandbox.terminate()
-        state_path.unlink(missing_ok=True)
+        try:
+            sandbox.terminate()
+        finally:
+            state_path.unlink(missing_ok=True)
     log(f"Modal environment stopped. Output: {directory}")
 
 
@@ -145,14 +155,16 @@ class ModalProvider(Provider):
         )
         environment = {
             "PYTHONUNBUFFERED": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONPATH": "/opt/vllm-bench-lib:" + self.config.image_workdir,
-            "HF_HOME": "/kalypso-cache/huggingface",
-            "VLLM_CACHE_ROOT": "/kalypso-cache/vllm",
+            "HF_HOME": str(CACHE / "huggingface"),
+            "VLLM_CACHE_ROOT": str(CACHE / "vllm"),
+            "XDG_CACHE_HOME": str(CACHE),
             "NO_PROXY": "*",
         }
         with modal.enable_output():
             sandbox = modal.Sandbox.create(
-                "python",
+                "python3",
                 "-m",
                 "vllm_bench.providers.modal_runtime",
                 app=modal.App.lookup(settings.app, create_if_missing=True),
@@ -164,13 +176,14 @@ class ModalProvider(Provider):
                 timeout=settings.timeout,
                 encrypted_ports=[urlsplit(i["url"]).port for i in instances.values()],
                 volumes={
-                    "/kalypso-cache": modal.Volume.from_name(
+                    str(CACHE): modal.Volume.from_name(
                         settings.cache_volume, create_if_missing=True
                     )
                 },
             )
         self.state = {
             "provider": "modal",
+            "image": self.config.base_image,
             "sandbox_id": sandbox.object_id,
             "directory": str(directory),
             "services": list(instances),
@@ -187,7 +200,7 @@ class ModalProvider(Provider):
             sandbox.filesystem.copy_from_local(archive, "/tmp/vllm-bench-project.zip")
             remote_command(
                 sandbox,
-                "python",
+                "python3",
                 "-c",
                 "import zipfile; zipfile.ZipFile('/tmp/vllm-bench-project.zip')"
                 ".extractall('/workspace/project')",

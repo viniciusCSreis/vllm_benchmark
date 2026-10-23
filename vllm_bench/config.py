@@ -24,19 +24,15 @@ class Service(ConfigModel):
     environment: dict[str, str] = Field(default_factory=dict)
 
 
-class Benchmark(ConfigModel):
-    script: str
-    script_args: dict[str, Any] = Field(default_factory=dict)
-
-
 class Scenario(ConfigModel):
     name: Name
     args: dict[str, Any] = Field(default_factory=dict)
     services: list[Name] = Field(min_length=1)
 
 
-class BenchmarkScenarios(ConfigModel):
-    benchmark: Name
+class Benchmark(ConfigModel):
+    script: str
+    script_args: dict[str, Any] = Field(default_factory=dict)
     scenarios: list[Scenario] = Field(min_length=1)
 
 
@@ -59,7 +55,6 @@ class Config(ConfigModel):
     global_args: dict[str, Any] = Field(default_factory=dict)
     services: dict[Name, Service] = Field(min_length=1)
     benchmarks: dict[Name, Benchmark] = Field(min_length=1)
-    benchmark_scenarios: BenchmarkScenarios | None = None
     runs: int = Field(default=1, gt=0)
     startup_timeout: float = Field(default=1800, gt=0)
     benchmark_timeout: float = Field(default=3600, gt=0)
@@ -67,16 +62,17 @@ class Config(ConfigModel):
 
     @model_validator(mode="after")
     def check_references(self):
-        if self.benchmark_scenarios is not None:
-            selection = self.benchmark_scenarios
-            if selection.benchmark not in self.benchmarks:
-                raise ValueError(f"Unknown benchmark: {selection.benchmark}")
-            names = [scenario.name for scenario in selection.scenarios]
+        for benchmark, settings in self.benchmarks.items():
+            names = [scenario.name for scenario in settings.scenarios]
             if len(names) != len(set(names)):
-                raise ValueError("Scenario names must be unique")
-            for scenario in selection.scenarios:
+                raise ValueError(
+                    f"Scenario names must be unique in benchmark {benchmark}"
+                )
+            for scenario in settings.scenarios:
                 if len(scenario.services) != len(set(scenario.services)):
-                    raise ValueError(f"Repeated services in scenario {scenario.name}")
+                    raise ValueError(
+                        f"Repeated services in {benchmark}/{scenario.name}"
+                    )
                 if missing := set(scenario.services) - self.services.keys():
                     raise ValueError(f"Unknown scenario services: {sorted(missing)}")
         for path in [
@@ -128,3 +124,29 @@ def read_config(path, seen=None):
 
 def load_config(path):
     return Config.model_validate(read_config(path))
+
+
+def select_benchmarks(config, benchmarks, scenarios):
+    """Resolve the complete selection before starting or stopping infrastructure."""
+    for label, names in [("benchmarks", benchmarks), ("scenarios", scenarios)]:
+        if "*" in names and names != ["*"]:
+            raise ValueError(f"Use '*' alone when selecting all {label}")
+        if len(names) != len(set(names)):
+            raise ValueError(f"Repeated {label} in selection")
+    names = list(config.benchmarks) if benchmarks == ["*"] else benchmarks
+    if missing := set(names) - config.benchmarks.keys():
+        raise ValueError(f"Unknown benchmarks: {', '.join(sorted(missing))}")
+    selected = {}
+    for name in names:
+        benchmark = config.benchmarks[name]
+        available = {scenario.name: scenario for scenario in benchmark.scenarios}
+        wanted = list(available) if scenarios == ["*"] else scenarios
+        if missing := set(wanted) - available.keys():
+            raise ValueError(
+                f"Unknown scenarios for benchmark '{name}': "
+                + ", ".join(sorted(missing))
+            )
+        selected[name] = benchmark.model_copy(
+            update={"scenarios": [available[scenario] for scenario in wanted]}
+        )
+    return config.model_copy(update={"benchmarks": selected})

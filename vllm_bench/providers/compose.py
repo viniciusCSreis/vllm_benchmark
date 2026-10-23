@@ -14,7 +14,7 @@ from ..processes import running_process
 from ..progress import log
 from .base import Provider
 from .context import script_context, service_instances
-from .paths import CONTAINER_PROJECT, CONTAINER_TRIAL
+from .paths import CONTAINER_LIBRARY, CONTAINER_PROJECT, CONTAINER_TRIAL
 
 
 def compose(state, *arguments, stream=False):
@@ -108,6 +108,12 @@ class ComposeProvider(Provider):
             volumes = [
                 {
                     "type": "bind",
+                    "source": str(Path(__file__).resolve().parents[1]),
+                    "target": str(CONTAINER_LIBRARY / "vllm_bench"),
+                    "read_only": True,
+                },
+                {
+                    "type": "bind",
                     "source": str(directory),
                     "target": str(CONTAINER_TRIAL),
                 },
@@ -125,7 +131,7 @@ class ComposeProvider(Provider):
             definition = {
                 "image": self.config.base_image,
                 "working_dir": str(project),
-                "entrypoint": ["python", "-m", "vllm_bench.service"],
+                "entrypoint": ["python3", "-m", "vllm_bench.service"],
                 "command": [service.startup_script],
                 "init": True,
                 "shm_size": "2gb",
@@ -135,7 +141,14 @@ class ComposeProvider(Provider):
                     "VLLM_BENCH_CONTEXT": str(
                         CONTAINER_TRIAL / ".provider" / f"{name}.json"
                     ),
+                    "PYTHONPATH": str(CONTAINER_LIBRARY)
+                    + (
+                        ":" + service.environment["PYTHONPATH"]
+                        if service.environment.get("PYTHONPATH")
+                        else ""
+                    ),
                     "PYTHONUNBUFFERED": "1",
+                    "PYTHONDONTWRITEBYTECODE": "1",
                     "HF_HOME": "/kalypso-cache/huggingface",
                     "VLLM_CACHE_ROOT": "/kalypso-cache/vllm",
                     "NO_PROXY": "*",
@@ -164,6 +177,7 @@ class ComposeProvider(Provider):
         )
         self.state = {
             "provider": "local",
+            "image": self.config.base_image,
             "project": f"vllmbench-{uuid4().hex[:12]}",
             "compose_file": str(compose_file),
             "directory": str(directory),

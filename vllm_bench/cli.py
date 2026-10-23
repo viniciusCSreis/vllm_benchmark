@@ -8,8 +8,9 @@ import time
 from contextlib import nullcontext
 from pathlib import Path
 
+from . import __version__
 from .artifacts import prepare_run, trials
-from .config import load_config, resolve_config
+from .config import load_config, resolve_config, select_benchmarks
 from .progress import log
 from .providers import get_provider, stop_saved
 from .runner import run_trial, wait_healthy
@@ -50,7 +51,8 @@ def show_environment(provider, endpoints, directory, timeout, started, detach):
 
 def main():
     parser = argparse.ArgumentParser(description="Run script-defined vLLM benchmarks.")
-    parser.add_argument("--config", type=Path, default=Path("base.yaml"))
+    parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument("--config", type=Path, default=Path("local_cpu.yaml"))
     parser.add_argument(
         "--current-dir",
         type=Path,
@@ -65,14 +67,10 @@ def main():
         action="store_true",
         help="Leave services running in the background",
     )
-    up.add_argument(
-        "--scenario", help="Scenario name from the selected benchmark config"
-    )
     down = commands.add_parser(
         "down", help="Stop the active environment and collect output"
     )
     run = commands.add_parser("run", help="Run the experiment on this client")
-    run.add_argument("target", choices=["scenarios"])
     report = commands.add_parser("report", help="Regenerate reports from saved files")
     report.add_argument("directory", type=Path)
     for command in [up, down, run, report]:
@@ -82,12 +80,29 @@ def main():
             default=argparse.SUPPRESS,
             help="Project root containing .vllm_bench",
         )
-    for command in [up, down, run]:
+    for command in [up, run]:
         command.add_argument(
             "--config",
             type=Path,
             default=argparse.SUPPRESS,
-            help="Config name or path, merged over base.yaml (e.g. medec)",
+            help="Config name or path, merged over base.yaml (e.g. modal)",
+        )
+    for command in [up, run]:
+        command.add_argument(
+            "--benchmark",
+            "--benchmarks",
+            dest="benchmarks",
+            nargs="+",
+            required=True,
+            help="Benchmark names, or '*' for all benchmarks",
+        )
+        command.add_argument(
+            "--scenario",
+            "--scenarios",
+            dest="scenarios",
+            nargs="+",
+            required=True,
+            help="Scenario names, or '*' for every scenario in each selected benchmark",
         )
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, interrupt)
@@ -108,49 +123,28 @@ def main():
         started = time.monotonic()
         if args.command == "up":
             log(f"Reading config: {config_path}")
-        config = load_config(config_path)
-        selection = config.benchmark_scenarios
-        if selection is None:
-            raise ValueError(
-                "No benchmark_scenarios selected. Use "
-                "'vllm_bench up --config medec --scenario baseline' or "
-                "'vllm_bench run scenarios --config medec'."
-            )
+        config = select_benchmarks(
+            load_config(config_path), args.benchmarks, args.scenarios
+        )
+        experiment = trials(config)
+        first = experiment[0]
         if args.command == "up":
-            available = {scenario.name: scenario for scenario in selection.scenarios}
-            if not args.scenario:
-                raise ValueError(
-                    "Choose a scenario with --scenario. Available: "
-                    + ", ".join(available)
-                )
-            if args.scenario not in available:
-                raise ValueError(
-                    f"Unknown scenario '{args.scenario}'. Available: "
-                    + ", ".join(available)
-                )
-            config = config.model_copy(
-                update={
-                    "benchmark_scenarios": selection.model_copy(
-                        update={
-                            "scenarios": [available[args.scenario]],
-                        }
-                    ),
-                }
+            pairs = sum(
+                len(benchmark.scenarios) for benchmark in config.benchmarks.values()
             )
-            selection = config.benchmark_scenarios
-            first = trials(config)[0]
+            if pairs != 1:
+                raise ValueError("up requires exactly one benchmark and one scenario")
             log(f"Configuration valid. Provider: {config.provider}")
-            log(
-                f"Starting benchmark '{first.benchmark}', scenario '{first.scenario}' "
-                f"(repeat {first.repeat})."
-            )
+            log(f"Starting benchmark '{first.benchmark}', scenario '{first.scenario}'.")
             if model := config.global_args.get("model"):
                 log(f"Model: {model}")
-        benchmark = config.benchmarks[selection.benchmark]
-        scripts = [benchmark.script]
+        scripts = [benchmark.script for benchmark in config.benchmarks.values()]
         if not config.skip_volume_mount:
             groups = dict.fromkeys(
-                name for scenario in selection.scenarios for name in scenario.services
+                name
+                for benchmark in config.benchmarks.values()
+                for scenario in benchmark.scenarios
+                for name in scenario.services
             )
             scripts += [config.services[name].startup_script for name in groups]
         for script in scripts:
@@ -161,19 +155,23 @@ def main():
                 state = json.loads(state_path.read_text())
                 directory = Path(state["directory"])
                 active = json.loads((directory / ".provider/client.json").read_text())
-                if state.get("provider", "local") != config.provider or (
-                    active["benchmark"],
-                    active["scenario"],
-                ) != (
-                    selection.benchmark,
-                    args.scenario,
+                if (
+                    state.get("provider", "local") != config.provider
+                    or state.get("image") != config.base_image
+                    or (active["benchmark"], active["scenario"])
+                    != (first.benchmark, first.scenario)
+                    or active["global_args"] != config.global_args
+                    or active["scenario_args"]
+                    != config.benchmarks[first.benchmark].scenarios[0].args
                 ):
                     raise ValueError(
                         f"An environment for {active['benchmark']}/"
                         f"{active['scenario']} "
-                        "is already active. Run 'vllm_bench down' before switching."
+                        "is already active with different selection "
+                        "or environment settings. "
+                        "Run 'vllm_bench down' before switching."
                     )
-                log(f"Attaching to {selection.benchmark}/{args.scenario}: {directory}")
+                log(f"Attaching to {first.benchmark}/{first.scenario}: {directory}")
                 endpoints = json.loads((directory / "endpoints.json").read_text())
                 return show_environment(
                     get_provider(config, root),
@@ -186,7 +184,6 @@ def main():
             stop_saved(state_path)
         output = prepare_run(config, root)
         provider = get_provider(config, root)
-        experiment = trials(config)
         if args.command == "up":
             trial = experiment[0]
             directory = output / trial.directory

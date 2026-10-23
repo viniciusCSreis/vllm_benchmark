@@ -1,19 +1,48 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "vllm-benchmark"
-version = "0.1.0"
-description = "Run user-defined vLLM benchmark scenarios locally or on Modal."
+dynamic = ["version"]
+description = "Run script-defined vLLM benchmarks through Docker Compose or Modal."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "viniciusCSreis"}]
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.12,<3", "PyYAML>=6", "requests>=2.26", "prometheus-client>=0.18", "matplotlib>=3.7"]
+keywords = ["vllm", "benchmark", "docker", "modal", "inference"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: System :: Benchmark",
+]
+dependencies = [
+  "pydantic>=2.12,<3",
+  "PyYAML>=6",
+  "requests>=2.26",
+  "prometheus-client>=0.18",
+  "matplotlib>=3.7",
+]
 
 [project.optional-dependencies]
 modal = ["modal>=1.6.2,<2"]
+dev = ["build>=1.2", "twine>=6", "ruff>=0.11"]
+
+[project.urls]
+Repository = "https://github.com/viniciusCSreis/vllm_benchmark"
+Issues = "https://github.com/viniciusCSreis/vllm_benchmark/issues"
 
 [project.scripts]
 vllm_bench = "vllm_bench.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "vllm_bench.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["vllm_bench*"]

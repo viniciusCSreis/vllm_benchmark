@@ -52,7 +52,7 @@ def run_trial(config, root, provider, trial, directory):
     directory.mkdir(parents=True)
     scenario = next(
         item
-        for item in config.benchmark_scenarios.scenarios
+        for item in config.benchmarks[trial.benchmark].scenarios
         if item.name == trial.scenario
     )
     result = TrialResult(

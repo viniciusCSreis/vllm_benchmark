@@ -4,3 +4,5 @@ from pathlib import Path
 
 CONTAINER_TRIAL = Path("/run/vllm-bench/trial")
 CONTAINER_PROJECT = Path("/workspace/project")
+
+CONTAINER_LIBRARY = Path("/opt/vllm-bench-lib")

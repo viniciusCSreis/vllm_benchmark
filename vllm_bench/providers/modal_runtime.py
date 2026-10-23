@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from threading import Thread
 
-from ..artifacts import write_json
+from ..json_io import write_json
 
 TRIAL = Path("/run/vllm-bench/trial")
 CONTROL = TRIAL / ".provider"

@@ -1,7 +1,6 @@
 """Number result directories and save the exact experiment inputs."""
 
 import hashlib
-import json
 import os
 import re
 import subprocess
@@ -13,6 +12,7 @@ import yaml
 
 from . import __version__
 from .contracts import Trial
+from .json_io import write_json
 from .progress import log
 
 EXCLUDED = {
@@ -31,13 +31,6 @@ EXCLUDED = {
     "dist",
     ".wheels",
 }
-
-
-def write_json(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2))
-    temporary.replace(path)
 
 
 def project_files(root):
@@ -74,14 +67,10 @@ def project_files(root):
 
 
 def trials(config):
-    selection = config.benchmark_scenarios
-    if selection is None:
-        raise ValueError(
-            "Select a config with benchmark_scenarios, e.g. --config medec"
-        )
     return [
-        Trial(benchmark=selection.benchmark, scenario=scenario.name, repeat=repeat)
-        for scenario in selection.scenarios
+        Trial(benchmark=name, scenario=scenario.name, repeat=repeat)
+        for name, benchmark in config.benchmarks.items()
+        for scenario in benchmark.scenarios
         for repeat in range(1, config.runs + 1)
     ]
 

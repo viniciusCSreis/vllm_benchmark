@@ -1,0 +1,17 @@
+name: example
+provider: local
+services:
+  leader:
+    role: leader
+    startup_script: startup.py
+    health_port: 8000
+    metrics_path: /metrics
+benchmarks:
+  example:
+    script: benchmark.py
+    scenarios:
+    - name: baseline
+      services:
+      - leader
+startup_timeout: 60
+benchmark_timeout: 30
