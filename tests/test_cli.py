@@ -11,7 +11,7 @@ from unittest.mock import patch
 import yaml
 from pydantic import ValidationError
 
-from vllm_bench import bench_util
+from vllm_bench import Service, bench_util, enviroment
 from vllm_bench.artifacts import prepare_run, project_files, trials
 from vllm_bench.cli import main
 from vllm_bench.config import Config, load_config, select_benchmarks
@@ -380,6 +380,30 @@ class CliTests(unittest.TestCase):
                     Trial(benchmark="first", scenario="baseline", repeat=2), directory
                 )
             with patch.dict(os.environ, {"VLLM_BENCH_CONTEXT": str(context)}):
+                self.assertEqual(enviroment.benchmark, "first")
+                self.assertEqual(enviroment.scenario, "baseline")
+                self.assertEqual(enviroment.repeat, 2)
+                self.assertIsInstance(enviroment.project_dir, Path)
+                self.assertEqual(enviroment.output_dir, directory)
+                self.assertIsNone(enviroment.service)
+                with self.assertRaisesRegex(ValueError, "no current service"):
+                    enviroment.get_service()
+                self.assertIsInstance(enviroment.leader, Service)
+                self.assertEqual(enviroment.leader.port, 12345)
+                self.assertEqual(enviroment.leader.url, "http://127.0.0.1:12345")
+                self.assertEqual(
+                    enviroment.get_service("leader", internal=True).url,
+                    "http://leader-1:8000",
+                )
+                self.assertEqual(enviroment.workers, ())
+                self.assertEqual(enviroment.get_arg("missing", 0.5), 0.5)
+                self.assertEqual(
+                    enviroment.get_arg("model", scope="global"), "test-model"
+                )
+                self.assertEqual(
+                    enviroment.get_arg("coordinator", scope="scenario"),
+                    "single_worker",
+                )
                 self.assertEqual(bench_util.current_run, 2)
                 self.assertEqual(bench_util.get_global_arg("model"), "test-model")
                 self.assertEqual(
@@ -395,6 +419,33 @@ class CliTests(unittest.TestCase):
                     bench_util.get_service_path(directory / "inputs/file.csv"),
                     "/run/vllm-bench/trial/inputs/file.csv",
                 )
+
+    def test_environment_returns_typed_replicas_with_isolated_arguments(self):
+        settings = config()
+        settings.services["worker"].service_args = {"model": "worker-model"}
+        trial = Trial(benchmark="first", scenario="distributed", repeat=1)
+        instances = service_instances(settings, trial)
+        context = script_context(settings, trial, Path("/project"), instances)
+        context.update(
+            service=instances["worker-2"], output_dir="/trial/services/worker-2"
+        )
+        with patch("vllm_bench.enviroment._context", return_value=context):
+            service = enviroment.get_service()
+            self.assertIsInstance(service, Service)
+            self.assertEqual(service.name, "worker-2")
+            self.assertEqual(service.group, "worker")
+            self.assertEqual(service.role, "worker")
+            self.assertEqual(service.replica, 2)
+            self.assertEqual(service.args["model"], "worker-model")
+            self.assertEqual(len(enviroment.workers), 2)
+            with self.assertRaisesRegex(ValueError, "found 2"):
+                enviroment.get_service("worker")
+            self.assertEqual(enviroment.get_service("worker-2"), service)
+            self.assertEqual(enviroment.leader.args["model"], "test-model")
+            service.args["model"] = "changed"
+            self.assertEqual(enviroment.get_service().args["model"], "worker-model")
+            with self.assertRaisesRegex(ValueError, "found 0"):
+                enviroment.get_service("missing")
 
     def test_service_args_override_globals_without_affecting_other_services(self):
         data = config().model_dump()

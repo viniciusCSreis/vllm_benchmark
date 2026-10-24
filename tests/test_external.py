@@ -1,6 +1,7 @@
 """Service ownership and execution checks for external and managed trials."""
 
 import json
+import shlex
 import tempfile
 import threading
 import unittest
@@ -11,7 +12,7 @@ from unittest.mock import Mock, patch
 import yaml
 from test_cli import config
 
-from vllm_bench.cli import main
+from vllm_bench.cli import main, run_only_command
 from vllm_bench.contracts import Trial, TrialResult
 from vllm_bench.external import service_endpoints
 from vllm_bench.reports.data import load_data
@@ -27,7 +28,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        if Path(payload["path"]).read_text() != "shared input":
+        path = Path(payload["path"])
+        self.server.last_path = str(path)
+        if project := getattr(self.server, "project_dir", None):
+            path = project / path.relative_to("/workspace/project")
+        if path.read_text() != "shared input":
             self.send_error(400)
             return
         self.server.requests += 1
@@ -107,6 +112,50 @@ class ExternalTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join()
+
+    def test_up_command_maps_sampled_inputs_into_the_shared_project_mount(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            folder = root / ".vllm_bench/configs"
+            folder.mkdir(parents=True)
+            settings = config()
+            config_path = folder / "base.yaml"
+            config_path.write_text(yaml.safe_dump(settings.model_dump()))
+            (root / "benchmark.py").write_text(
+                (Path(__file__).parent / "fixtures/benchmark.py").read_text()
+            )
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            server.requests = 0
+            server.project_dir = root
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                trial = Trial(benchmark="first", scenario="baseline", repeat=1)
+                endpoints = service_endpoints(
+                    settings, trial, [f"leader=http://127.0.0.1:{server.server_port}"]
+                )
+                command = shlex.split(
+                    run_only_command(settings, config_path, root, trial, endpoints)
+                )
+                self.assertEqual(
+                    command[command.index("--service-project-dir") + 1],
+                    "/workspace/project",
+                )
+                with (
+                    patch("sys.argv", command),
+                    patch("vllm_bench.reports.generate_reports"),
+                ):
+                    self.assertEqual(main(), 0)
+                self.assertEqual(server.requests, 1)
+                self.assertEqual(
+                    server.last_path,
+                    "/workspace/project/results/external-test/run001/"
+                    "data/first/baseline/run_1/inputs.txt",
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
 
     def test_service_urls_validate_required_dependencies_and_keep_https_paths(self):
         settings = config()

@@ -47,11 +47,14 @@ def service_endpoints(config, trial, values):
     ]
 
 
-def prepare_context(config, trial, root, directory, endpoints):
+def prepare_context(
+    config, trial, root, directory, endpoints, *, service_project_dir=None
+):
     instances = {item["name"]: item for item in endpoints}
     context = script_context(config, trial, root, instances)
     context.update(
         external_services=True,
+        service_project_dir=str(service_project_dir or root),
         trial_dir=str(directory),
         output_dir=str(directory),
     )

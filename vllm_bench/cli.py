@@ -15,6 +15,7 @@ from .config import load_config, resolve_config, select_benchmarks
 from .external import prepare_context, service_endpoints
 from .progress import log
 from .providers import get_provider, stop_saved
+from .providers.paths import CONTAINER_PROJECT
 from .runner import run_only, run_trial, start_environment, wait_healthy
 
 
@@ -35,6 +36,8 @@ def run_only_command(config, config_path, root, trial, endpoints):
         "--scenario",
         trial.scenario,
     ]
+    if config.provider == "local" and not config.skip_volume_mount:
+        command.extend(["--service-project-dir", str(CONTAINER_PROJECT)])
     urls = {}
     for item in endpoints:
         urls.setdefault(item["group"], item["url"])
@@ -114,6 +117,10 @@ def main():
         required=True,
         metavar="NAME=URL",
         help="Existing service base URL; repeat for each required service",
+    )
+    single.add_argument(
+        "--service-project-dir",
+        help="Project mount path visible to the services (e.g. /workspace/project)",
     )
     single.add_argument(
         "--dataset-path",
@@ -236,7 +243,14 @@ def main():
 
             output = prepare_run(config, root)
             directory = output / first.directory
-            context = prepare_context(config, first, root, directory, endpoints)
+            context = prepare_context(
+                config,
+                first,
+                root,
+                directory,
+                endpoints,
+                service_project_dir=args.service_project_dir,
+            )
             try:
                 result = run_only(config, root, first, directory, context, endpoints)
                 if result.status == "cancelled":

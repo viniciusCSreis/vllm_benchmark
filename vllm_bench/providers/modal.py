@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tempfile
 import time
 import zipfile
 from contextlib import contextmanager
@@ -45,13 +46,31 @@ def upload_path(sandbox_id, source, destination):
     sandbox = modal_sdk().Sandbox.from_id(sandbox_id)
     source = Path(source)
     if source.is_dir():
-        remote_command(sandbox, "mkdir", "-p", destination)
-        for path in source.rglob("*"):
-            if path.is_file() and not path.is_symlink():
-                sandbox.filesystem.copy_from_local(
-                    path, str(Path(destination) / path.relative_to(source))
-                )
+        log(f"Packing benchmark inputs: {source}")
+        with tempfile.TemporaryDirectory(prefix="vllm-bench-input-") as folder:
+            archive = Path(folder) / "inputs.zip"
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+                for path in source.rglob("*"):
+                    if path.is_file() and not path.is_symlink():
+                        bundle.write(path, path.relative_to(source))
+                count = len(bundle.infolist())
+            remote_archive = f"/tmp/{Path(folder).name}.zip"
+            log(f"Uploading {count} input files as one archive to {destination}")
+            sandbox.filesystem.copy_from_local(archive, remote_archive)
+            remote_command(
+                sandbox,
+                "python3",
+                "-c",
+                "import pathlib, sys, zipfile; "
+                "pathlib.Path(sys.argv[2]).mkdir(parents=True, exist_ok=True); "
+                "zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2]); "
+                "pathlib.Path(sys.argv[1]).unlink()",
+                remote_archive,
+                destination,
+            )
+        log(f"Benchmark inputs ready: {destination}")
     else:
+        log(f"Uploading benchmark input: {source}")
         sandbox.filesystem.copy_from_local(source, destination)
 
 

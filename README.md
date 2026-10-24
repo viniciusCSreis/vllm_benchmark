@@ -122,13 +122,19 @@ Results are saved under `results/external-<name>/runNNN/`, with one trial,
 endpoint URLs, the client context, logs, metrics, and reports. External runs do not
 upload a project snapshot, transfer inputs, or collect server logs/GPU samples.
 When the client and servers share a filesystem, `get_service_path()` returns the
-local path unchanged. For cloud deployments, make inputs available to the servers
+local path unchanged. If the project is mounted at a different path in the services,
+pass `--service-project-dir /workspace/project` to translate paths beneath the
+local project root. This includes sampled inputs under `results/`. This flag maps
+paths only; the directory must already be shared with the services.
+For cloud deployments, make inputs available to the servers
 first; `--dataset-path /server/path` passes that value as the benchmark's
 `dataset_path` argument. Your benchmark adapter decides how to use it.
 
 After health checks pass, `up` prints a copyable `run_only` command before the
 endpoint and log details, including the selected config, project, benchmark,
-scenario, and service URLs. You can start an environment with `up -d`, then run
+scenario, and service URLs. For local services with a mounted project, it also
+includes `--service-project-dir` so sampled inputs resolve inside Docker.
+You can start an environment with `up -d`, then run
 that command as often as needed before stopping it with `down`. Supply dataset paths
 visible to that existing environment when it cannot access the client's paths.
 
@@ -254,37 +260,114 @@ saved as `modal.log`; service files may no longer be available.
 
 ## Script library
 
-```python
-from vllm_bench import bench_util
+Use `enviroment` for typed runtime state and `bench_util` for runtime operations.
+The public import is spelled `enviroment`. Importing it does not load a context;
+fields are read when a script accesses them during a CLI-managed trial.
 
-model = bench_util.get_global_arg("model")
-options = bench_util.get_service_args()
-coordinator = bench_util.get_scenario_arg("coordinator")
-fraction = bench_util.get_benchmark_arg("dataset_percentage", 1.0)
-repeat = bench_util.current_run
-benchmark = bench_util.current_benchmark
-output = bench_util.get_output_dir()
+```python
+from vllm_bench import bench_util, enviroment
+
+leader = enviroment.get_service("leader")  # Service, with attribute completion
+model = leader.args["model"]
+port = leader.port
+benchmark = enviroment.benchmark
+fraction = enviroment.get_arg("dataset_percentage", 1.0)
+coordinator = enviroment.get_arg("coordinator", scope="scenario")
+output = enviroment.output_dir
+remote_path = bench_util.get_service_path(output / "inputs/data.csv")
 ```
 
-Other helpers:
+`Environment` and `Service` are exported for type annotations:
 
-- `get_project_dir()` returns the project root in the calling environment.
-- `get_service()` returns the calling startup's name, role, replica, and URL;
-  it returns `None` in client benchmark scripts.
-- `get_leader_url()` and `get_worker_urls()` choose the correct addresses for
-  the calling environment. Disabled workers yield an empty list.
-- `get_service_url("icp")` returns a named service. For a replicated group, use
-  its individual name such as `worker-1`.
-- `get_service_url("icp", internal=True)` returns the container address when
-  constructing a benchmark payload that the leader will execute.
-- `get_service_path(local_path)` translates project/trial paths in a client
-  benchmark to paths readable inside the containers.
-- `get_gpu_count()`, `is_gpu_available()`, and `is_cpu()` inspect the calling
-  environment using `nvidia-smi` without importing PyTorch.
+```python
+from vllm_bench import Environment, Service, enviroment
 
-Benchmark scripts write `response.json` in `get_output_dir()`. Arbitrary JSON
-is preserved. When present, a numeric `latency_sec` and a `results` list provide
-additional summary fields; process runtime is measured independently.
+
+def leader_url(environment: Environment) -> str:
+    leader: Service = environment.leader
+    return leader.url
+```
+
+### Environment fields
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `benchmark` | `str` | Selected benchmark configuration name. |
+| `scenario` | `str` | Selected scenario configuration name. |
+| `repeat` | `int` | One-based repetition number. |
+| `sample_interval` | `float` | Metric sampling interval in seconds. |
+| `global_args` | `dict[str, JsonValue]` | Global arguments. |
+| `scenario_args` | `dict[str, JsonValue]` | Selected scenario arguments. |
+| `benchmark_args` | `dict[str, JsonValue]` | Selected benchmark arguments. |
+| `project_dir` | `Path` | Project root visible to this script. |
+| `service_project_dir` | `Path` | Project root visible to services. |
+| `trial_dir` | `Path` | Trial artifact directory. |
+| `output_dir` | `Path` | This script's output directory; created on access. |
+| `service` | `Service \| None` | Current startup instance; `None` on the client. |
+| `services` | `tuple[Service, ...]` | Instances with client-visible addresses. |
+| `internal_services` | `tuple[Service, ...]` | Instances with addresses used between services. |
+| `leader` | `Service` | The single leader with its client-visible address. |
+| `workers` | `tuple[Service, ...]` | Workers with client-visible addresses; empty for a baseline. |
+| `external_services` | `bool` | Whether services are managed outside this CLI invocation. |
+| `modal_sandbox_id` | `str \| None` | Modal sandbox used for uploads, if any. |
+
+Arguments are project-defined JSON values: strings, numbers, booleans, null,
+lists, or dictionaries. Argument dictionaries are fresh copies, so script
+changes do not affect the saved context or another service's arguments.
+
+### Environment methods and Service fields
+
+- `get_arg(name, default=None, *, scope="benchmark") -> JsonValue` reads an
+  argument. `scope` is `"benchmark"`, `"scenario"`, or `"global"`.
+- `get_service(name=None, *, internal=False) -> Service` returns the current
+  startup instance, a named service group, or a named replica such as `worker-1`.
+  Use `internal=True` for addresses reachable between services. A missing or
+  ambiguous service raises `ValueError`. Calling without a name on the client
+  also raises `ValueError`; use `enviroment.service` to check for a client.
+
+`Service` has a fixed schema, accessed through attributes:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | Unique instance name, such as `worker-1`. |
+| `group` | `str` | Service group from YAML, such as `worker`. |
+| `role` | `str` | Configured role, such as `leader`, `worker`, or `icp`. |
+| `replica` | `int` | One-based replica index. |
+| `url` | `str` | Base URL in the selected address space. |
+| `port` | `int` | URL port, defaulting to 80 for HTTP or 443 for HTTPS. |
+| `health_path` | `str` | Health endpoint relative to the base URL. |
+| `metrics_path` | `str \| None` | Prometheus endpoint, or `None` when disabled. |
+| `args` | `dict[str, JsonValue]` | Global arguments merged with this group's overrides. |
+
+### Runtime utilities
+
+- `bench_util.get_service_path(local_path)` translates project/trial paths into
+  paths readable by services and uploads inputs when needed by Modal.
+- `bench_util.prepare_dataset(archive, records, fraction=1.0)` samples a ZIP
+  archive into the trial output `inputs/` directory and returns that directory.
+  Use a CSV member path to sample rows while preserving its header, or a glob
+  such as `articles/*.txt` to sample files in natural numeric order while
+  preserving supporting files. It writes counts to `dataset.json`.
+- `bench_util.source_environment(package)` overlays project Python sources on
+  the installed wheel, retaining native libraries and missing Python files.
+- `bench_util.start_engine(command, options)` launches a project-provided vLLM
+  command with the overlay, GPU selection and CUDA validation, and serialized
+  option flags. Pass `model` in `options`; the launcher receives `MODEL` and
+  `VLLM_PYTHON`. Leaders use the last GPU; other replicas rotate across GPUs.
+  It writes the resolved command, model, and GPU count to `startup.json`.
+- `bench_util.get_gpu_count()`, `is_gpu_available()`, and `is_cpu()` inspect
+  hardware using `nvidia-smi` without importing PyTorch.
+
+The existing `bench_util` context getters and `current_run`/`current_benchmark`
+remain available for compatibility. New scripts should use the typed
+`enviroment` interface for context and service access. The package includes
+`py.typed` so editors can discover the public types after installation.
+
+Benchmark latency is measured automatically as the benchmark script's runtime,
+excluding service startup and metric collection. Scripts may optionally write
+`response.json` in `get_output_dir()`. Arbitrary JSON is preserved; a numeric
+`latency_sec` overrides the measured latency, and a `results` list supplies the
+output row count. No response file is needed for timing or engine metrics.
 
 ## Files and infrastructure
 

@@ -103,6 +103,7 @@ def run_only(config, root, trial, directory, context, endpoints, *, provider=Non
                         )
             finally:
                 result.runtime_sec = time.perf_counter() - started
+        result.latency_sec = result.runtime_sec
         response = directory / "response.json"
         if response.exists():
             payload = json.loads(response.read_text())

@@ -10,7 +10,7 @@ version/image reference, and `project.zip` plus SHA256 unless
 Each `data/<benchmark>/<scenario>/run_<repeat>/` contains:
 
 - `result.json`: identity, `status` (`ok`, `failed`, `cancelled`), `error`,
-  `runtime_sec`, optional response `latency_sec`/`output_rows`, resolved shared
+  `runtime_sec`, benchmark `latency_sec`, optional `output_rows`, resolved shared
   and scenario arguments, and engine counter differences/rates.
 - `response.json`: optional unmodified benchmark output.
 - `benchmark.log`: client benchmark stdout/stderr.
@@ -27,7 +27,8 @@ Each `data/<benchmark>/<scenario>/run_<repeat>/` contains:
 
 `runtime_sec` measures the client benchmark process, excluding service startup
 and metric setup. It includes Python imports and any dataset preparation in the
-benchmark script. `latency_sec` comes from its response, when available.
+benchmark script. For successful trials, `latency_sec` defaults to this measured
+runtime. A numeric `latency_sec` in the optional response overrides it.
 
 Engine counter differences cover requests, prompt/generated tokens, prefix-cache
 queries/hits, and preemptions. Rates are differences divided by client runtime.

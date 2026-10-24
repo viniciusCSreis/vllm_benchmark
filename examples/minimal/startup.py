@@ -2,9 +2,8 @@
 
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlsplit
 
-from vllm_bench import bench_util
+from vllm_bench import enviroment
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -25,5 +24,5 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({"results": [{"message": "hello"}]}).encode())
 
 
-port = urlsplit(bench_util.get_service()["url"]).port
+port = enviroment.get_service().port
 HTTPServer(("0.0.0.0", port), Handler).serve_forever()
