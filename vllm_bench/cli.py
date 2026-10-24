@@ -213,7 +213,7 @@ def main():
         if args.command == "up":
             log(f"Configuration valid. Provider: {config.provider}")
             log(f"Starting benchmark '{first.benchmark}', scenario '{first.scenario}'.")
-            if model := config.global_args.get("model"):
+            if model := config.get_global_args(first.benchmark).get("model"):
                 log(f"Model: {model}")
         scripts = [benchmark.script for benchmark in config.benchmarks.values()]
         if not external:
@@ -268,7 +268,7 @@ def main():
                     or state.get("image") != config.base_image
                     or (active["benchmark"], active["scenario"])
                     != (first.benchmark, first.scenario)
-                    or active["global_args"] != config.global_args
+                    or active["global_args"] != config.get_global_args(first.benchmark)
                     or active.get("service_args", {})
                     != {
                         group: config.services[group].service_args

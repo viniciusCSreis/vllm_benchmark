@@ -202,6 +202,10 @@ letter. Script paths are relative to the project root.
 
 Optional settings:
 
+- Benchmark `overwrite_global_args`: override global defaults for that benchmark's
+  clients, services, and result metadata. Precedence is `global_args`, then
+  `overwrite_global_args`, then service `service_args`. Other benchmarks keep
+  their own defaults.
 - Service `replicas`: number of instances; defaults to one.
 - Service `gpus: all` or `gpus: ["0"]`: local NVIDIA GPU allocation. Omit for CPU.
 - Service `environment`: extra string environment values.

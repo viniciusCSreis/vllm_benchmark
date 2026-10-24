@@ -33,6 +33,7 @@ class Scenario(ConfigModel):
 class Benchmark(ConfigModel):
     script: str
     script_args: dict[str, Any] = Field(default_factory=dict)
+    overwrite_global_args: dict[str, Any] = Field(default_factory=dict)
     scenarios: list[Name] = Field(min_length=1)
     services: list[Name] = Field(default_factory=list)
 
@@ -100,6 +101,10 @@ class Config(ConfigModel):
                 "services": list(dict.fromkeys(scenario.services + settings.services))
             }
         )
+
+    def get_global_args(self, benchmark):
+        """Benchmark overrides replace global defaults; service args apply last."""
+        return {**self.global_args, **self.benchmarks[benchmark].overwrite_global_args}
 
 
 def resolve_config(path):

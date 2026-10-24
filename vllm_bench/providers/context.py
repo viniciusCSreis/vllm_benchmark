@@ -29,7 +29,7 @@ def script_context(config, trial, project, instances):
     return {
         **trial.model_dump(),
         "sample_interval": config.sample_interval,
-        "global_args": config.global_args,
+        "global_args": config.get_global_args(trial.benchmark),
         "service_args": {
             group: config.services[group].service_args for group in scenario.services
         },

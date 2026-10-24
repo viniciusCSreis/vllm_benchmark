@@ -64,7 +64,7 @@ def run_only(config, root, trial, directory, context, endpoints, *, provider=Non
     scenario = config.get_scenario(trial.benchmark, trial.scenario)
     result = TrialResult(
         **trial.model_dump(),
-        global_args=config.global_args,
+        global_args=config.get_global_args(trial.benchmark),
         scenario_args=scenario.args,
     )
     samples = []
@@ -135,7 +135,7 @@ def run_trial(config, root, provider, trial, directory):
     directory.mkdir(parents=True, exist_ok=True)
     result = TrialResult(
         **trial.model_dump(),
-        global_args=config.global_args,
+        global_args=config.get_global_args(trial.benchmark),
         scenario_args=config.get_scenario(trial.benchmark, trial.scenario).args,
     )
     try:

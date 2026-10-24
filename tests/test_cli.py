@@ -475,6 +475,48 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(bench_util.get_global_arg("max_model_len"), 8192)
                 self.assertEqual(bench_util.get_global_arg("model"), "test-model")
 
+    def test_benchmark_global_overrides_are_isolated_and_service_args_apply_last(self):
+        settings = config(
+            global_args={"model": "test-model", "gpu_memory_utilization": 0.9}
+        )
+        settings.benchmarks["second"] = settings.benchmarks["first"].model_copy(
+            deep=True
+        )
+        settings.benchmarks["first"].overwrite_global_args = {
+            "gpu_memory_utilization": 0.8,
+            "icl_gpu": True,
+        }
+        settings.services["worker"].service_args = {"gpu_memory_utilization": 0.5}
+        for shared_network in [False, True]:
+            for benchmark, expected in [("first", 0.8), ("second", 0.9)]:
+                trial = Trial(benchmark=benchmark, scenario="distributed", repeat=1)
+                instances = service_instances(
+                    settings, trial, shared_network=shared_network
+                )
+                context = script_context(settings, trial, Path("/project"), instances)
+                context.update(
+                    service=instances["leader-1"], output_dir="/trial/leader"
+                )
+                with patch("vllm_bench.enviroment._context", return_value=context):
+                    self.assertEqual(
+                        enviroment.global_args["gpu_memory_utilization"], expected
+                    )
+                    self.assertEqual(
+                        enviroment.leader.args["gpu_memory_utilization"], expected
+                    )
+                    self.assertEqual(
+                        enviroment.get_service("worker-1").args[
+                            "gpu_memory_utilization"
+                        ],
+                        0.5,
+                    )
+                    self.assertEqual(
+                        enviroment.global_args.get("icl_gpu", False),
+                        benchmark == "first",
+                    )
+        self.assertEqual(settings.global_args["gpu_memory_utilization"], 0.9)
+        self.assertNotIn("icl_gpu", settings.global_args)
+
     def test_missing_metrics_and_counter_resets_are_not_zero(self):
         self.assertEqual(
             parse_metrics(

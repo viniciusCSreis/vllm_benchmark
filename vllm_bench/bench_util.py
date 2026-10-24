@@ -205,6 +205,20 @@ def source_environment(package):
     }
 
 
+def redact_environment(environment):
+    """Copy launch environment for metadata, masking common credential names."""
+    return {
+        name: "<redacted>"
+        if re.search(
+            r"(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|"
+            r"CREDENTIALS?|AUTHORIZATION)(?:_|$)",
+            name.upper(),
+        )
+        else value
+        for name, value in sorted(environment.items())
+    }
+
+
 def start_engine(command, options):
     """Launch a vLLM engine with source overlay, GPU checks, and startup metadata.
 
@@ -265,6 +279,7 @@ def start_engine(command, options):
                 "command": command,
                 "model": model,
                 "gpu_count": get_gpu_count(),
+                "environment": redact_environment(environment),
             },
             indent=2,
         )
