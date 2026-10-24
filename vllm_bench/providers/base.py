@@ -1,9 +1,15 @@
 """Infrastructure only; scenario scheduling and metrics belong to the runner."""
 
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 
 
 class Provider(ABC):
+    @contextmanager
+    def run_session(self):
+        """Own resources shared by trials in one run_scenarios invocation."""
+        yield
+
     @abstractmethod
     def start(self, trial, directory):
         """Start one trial and return client context and reachable service endpoints."""

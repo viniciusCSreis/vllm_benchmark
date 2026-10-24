@@ -223,6 +223,12 @@ hardware; a CUDA-only vLLM build cannot automatically run on CPU.
 
 ## Modal
 
+`run_scenarios` creates a fresh temporary Modal app for each invocation. All
+selected trials run within that app; service logs are collected before the app
+is stopped on completion, failure, or cancellation. The next invocation creates
+a new app, even with the same `modal.app` name. Modal may retain stopped apps in
+its history. `up` continues to use a persistent named app for detached services.
+
 Install `python -m pip install 'vllm-benchmark[modal]'` and authenticate with
 `modal setup`. Define `.vllm_bench/configs/modal.yaml`:
 

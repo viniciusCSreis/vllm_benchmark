@@ -326,17 +326,18 @@ def main():
 
         failed = False
         try:
-            for trial in experiment:
-                result = run_trial(
-                    config, root, provider, trial, output / trial.directory
-                )
-                if result.status == "cancelled":
-                    return 130
-                failed = failed or result.status != "ok"
-                if state_path.exists():
-                    # Preserve failed cleanup state for recovery; stop scheduling.
-                    return 1
-            return 1 if failed else 0
+            with provider.run_session():
+                for trial in experiment:
+                    result = run_trial(
+                        config, root, provider, trial, output / trial.directory
+                    )
+                    if result.status == "cancelled":
+                        return 130
+                    failed = failed or result.status != "ok"
+                    if state_path.exists():
+                        # Preserve failed cleanup state for recovery; stop scheduling.
+                        return 1
+                return 1 if failed else 0
         finally:
             generate_reports(output)
     except KeyboardInterrupt:

@@ -137,12 +137,25 @@ class ModalProvider(Provider):
     def __init__(self, config, root):
         self.config = config
         self.root = root
+        self.app = None
         self.state_path = root / ".vllm_bench/state.json"
         self.state = (
             json.loads(self.state_path.read_text())
             if self.state_path.exists()
             else None
         )
+
+    @contextmanager
+    def run_session(self):
+        modal = modal_sdk()
+        with modal.enable_output(), modal.App(self.config.modal.app).run() as app:
+            self.app = app
+            log(f"Started fresh Modal app: {app.app_id}")
+            try:
+                yield
+            finally:
+                self.app = None
+                log(f"Stopping Modal app: {app.app_id}")
 
     def start(self, trial, directory):
         if self.state_path.exists():
@@ -186,7 +199,9 @@ class ModalProvider(Provider):
                 "python3",
                 "-m",
                 "vllm_bench.providers.modal_runtime",
-                app=modal.App.lookup(settings.app, create_if_missing=True),
+                app=self.app
+                if self.app is not None
+                else modal.App.lookup(settings.app, create_if_missing=True),
                 image=image,
                 env=environment,
                 gpu=settings.gpu,

@@ -5,6 +5,7 @@ import shlex
 import tempfile
 import threading
 import unittest
+from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -190,6 +191,7 @@ class ExternalTests(unittest.TestCase):
                 (root / script).touch()
             events = []
             provider = Mock()
+            provider.run_session.return_value = nullcontext()
 
             def start(trial, directory):
                 events.append(("up", trial.scenario, trial.repeat))

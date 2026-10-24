@@ -12,6 +12,7 @@ import yaml
 from test_cli import config
 
 from vllm_bench import bench_util
+from vllm_bench.cli import main
 from vllm_bench.config import load_config
 from vllm_bench.contracts import Trial
 from vllm_bench.providers import stop_saved
@@ -21,6 +22,76 @@ from vllm_bench.providers.modal import ModalProvider
 class ModalTests(unittest.TestCase):
     def tearDown(self):
         bench_util._context.cache_clear()
+
+    def test_run_scenarios_owns_fresh_app_and_closes_it_on_every_exit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            configs = root / ".vllm_bench/configs"
+            configs.mkdir(parents=True)
+            settings = config(provider="modal")
+            (configs / "modal.yaml").write_text(yaml.safe_dump(settings.model_dump()))
+            for script in ["benchmark.py", "worker.py", "leader.py"]:
+                (root / script).touch()
+            sdk = MagicMock()
+            apps = []
+
+            def new_app(name):
+                app = MagicMock()
+                app.app_id = f"ap-test-{len(apps)}"
+                app.run.return_value.__enter__.return_value = app
+                apps.append(app)
+                return app
+
+            sdk.App.side_effect = new_app
+            for status, expected in [
+                ("ok", 0),
+                ("failed", 1),
+                ("cancelled", 130),
+                ("exception", 1),
+                ("interrupt", 130),
+            ]:
+                providers = []
+
+                def trial_result(config, root, provider, trial, directory):
+                    providers.append(provider)
+                    self.assertIs(provider.app, apps[-1])
+                    if status == "exception":
+                        raise RuntimeError("startup failed")
+                    if status == "interrupt":
+                        raise KeyboardInterrupt
+                    return SimpleNamespace(status=status)
+
+                with (
+                    self.subTest(status=status),
+                    patch("vllm_bench.providers.modal.modal_sdk", return_value=sdk),
+                    patch("vllm_bench.cli.run_trial", side_effect=trial_result) as run,
+                    patch("vllm_bench.reports.generate_reports"),
+                    patch(
+                        "sys.argv",
+                        [
+                            "vllm_bench",
+                            "--current-dir",
+                            str(root),
+                            "run_scenarios",
+                            "--config",
+                            "modal",
+                            "--benchmark",
+                            "first",
+                            "--scenarios",
+                            "baseline",
+                            "distributed",
+                        ],
+                    ),
+                ):
+                    self.assertEqual(main(), expected)
+                    self.assertEqual(
+                        run.call_count, 2 if status in {"ok", "failed"} else 1
+                    )
+                    apps[-1].run.assert_called_once_with()
+                    apps[-1].run.return_value.__exit__.assert_called_once()
+                    self.assertIsNone(providers[0].app)
+            self.assertEqual(len(apps), 5)
+            sdk.App.lookup.assert_not_called()
 
     def test_config_extends_environment_and_preserves_benchmarks(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -99,11 +170,14 @@ class ModalTests(unittest.TestCase):
                 provider = ModalProvider(
                     config(provider="modal", modal={"gpu": "T4:1"}), root
                 )
+                provider.app = sdk.App.return_value
                 context, endpoints = provider.start(
                     Trial(benchmark="first", scenario="distributed", repeat=1),
                     directory,
                 )
                 creation = sdk.Sandbox.create.call_args.kwargs
+                self.assertIs(creation["app"], provider.app)
+                sdk.App.lookup.assert_not_called()
                 self.assertEqual(creation["gpu"], "T4:1")
                 self.assertEqual(list(creation["volumes"]), ["/mnt/vllm-bench-cache"])
                 self.assertEqual(
