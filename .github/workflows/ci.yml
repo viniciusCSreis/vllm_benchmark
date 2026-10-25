@@ -28,4 +28,5 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install .
-      - run: python tests/compose_smoke.py --image python:3.12-slim
+      - run: docker build -t vllm-benchmark-smoke -f tests/fixtures/compose.Dockerfile .
+      - run: python tests/compose_smoke.py --image vllm-benchmark-smoke

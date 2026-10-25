@@ -410,7 +410,8 @@ See [RESULT_FORMAT.md](RESULT_FORMAT.md) for the saved contract and reports.
 python -m pip install -e '.[dev]'
 ruff check .
 python -m unittest discover -s tests
-python tests/compose_smoke.py --image python:3.12-slim
+docker build -t vllm-benchmark-smoke -f tests/fixtures/compose.Dockerfile .
+python tests/compose_smoke.py --image vllm-benchmark-smoke
 ```
 
 The opt-in Compose check launches HTTP stand-ins with Prometheus metrics. It

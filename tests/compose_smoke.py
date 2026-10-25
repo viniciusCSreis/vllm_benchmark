@@ -1,7 +1,8 @@
 """Opt-in real Compose check with tiny HTTP engines, no models or cloud jobs.
 
-Run: python tests/compose_smoke.py --image python:3.12-slim
-The provider mounts this package; the image only needs Python 3.11 or newer.
+Build the image with tests/fixtures/compose.Dockerfile, then run:
+python tests/compose_smoke.py --image vllm-benchmark-smoke
+The provider mounts this package; the image supplies its dependencies.
 """
 
 import argparse
