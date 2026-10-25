@@ -8,18 +8,22 @@ from . import (
     engine_activity,
     engine_work,
     gpu_usage,
-    preemptions,
+    latency,
+    queue_peak,
     runtime,
     throughput,
+    tokens,
 )
 from .data import load_data
 
 REPORTS = [
     runtime,
+    latency,
+    queue_peak,
+    tokens,
     throughput,
     cache_hits,
     engine_work,
-    preemptions,
     engine_activity,
     gpu_usage,
 ]
@@ -36,6 +40,7 @@ def write_csv(path, rows):
 
 def generate_reports(result_dir):
     data = load_data(result_dir)
+    (data.output / "preemptions.png").unlink(missing_ok=True)
     (data.output / "summary.json").write_text(json.dumps(data.records, indent=2))
     fields = [
         "benchmark",

@@ -1,18 +1,21 @@
-"""Rates are per-engine counter differences divided by client runtime."""
+"""Per-engine throughput over each sampling interval, for every trial."""
 
-from .charts import comparison
-from .data import engine_total
+from .charts import counter_timeline
 
 
 def generate(data):
-    comparison(
+    counter_timeline(
         data,
         "throughput.png",
         {
-            "Inference requests / s": lambda r: engine_total(r, "requests_per_sec"),
-            "Prompt tokens / s": lambda r: engine_total(r, "prompt_tokens_per_sec"),
-            "Generated tokens / s": lambda r: engine_total(
-                r, "generation_tokens_per_sec"
+            "Inference requests / s (sample interval)": (
+                "vllm:request_success_total",
+                None,
+            ),
+            "Prompt tokens / s (sample interval)": ("vllm:prompt_tokens_total", None),
+            "Generated tokens / s (sample interval)": (
+                "vllm:generation_tokens_total",
+                None,
             ),
         },
     )

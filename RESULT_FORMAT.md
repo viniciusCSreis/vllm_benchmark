@@ -50,9 +50,13 @@ ignored. A successful benchmark need not produce Prometheus metrics or a respons
 file; those reports are omitted when no corresponding data exists.
 
 `reports/` contains `summary.json`, `runs.csv`, `engines.csv`, and available PNGs:
-runtime, throughput, cache hits, per-engine work, preemptions, engine activity,
-and GPU timelines. Comparisons group by benchmark and scenario, with means and
-sample standard deviations across successful repeats. Failed trials remain in
+runtime, throughput, cache hits, per-engine work, engine activity,
+and GPU timelines. Every chart identifies individual trials; no repeats are averaged.
+Throughput and prefix-cache hits use counter differences between adjacent snapshots
+divided by the sampling interval, per engine. Cache hit rate divides interval hits
+by interval queries; intervals without queries are omitted. Missing samples and
+counter resets leave gaps. Engine activity shows running/waiting requests and
+KV-cache usage over time. Runtime and engine work show individual successful trials. Failed trials remain in
 tables and may appear in timelines. Reports read saved files only.
 
 Modal runs keep the same trial and report layout. `.provider/provider.json`
@@ -60,3 +64,13 @@ records the sandbox ID, and `.provider/client.json` records public endpoints and
 remote path mappings. Service output and logs are downloaded into `services/`
 before reports run. If the sandbox exits before collection, `modal.log` preserves
 its available entrypoint logs and the trial is marked failed.
+
+Additional per-trial reports include benchmark latency (`latency.png`), interval
+means for request latency, inference queue wait, and time to first token
+(`request_latency.png`, `queue_wait.png`, `time_to_first_token.png`), cumulative
+prompt/generated tokens (`tokens_timeline.png`), peak sampled waiting requests
+summed across engines (`queue_peak.png`), and query-weighted cache hit rate
+(`cache_hit_rate.png`). Engine work includes request and both token totals.
+Histogram timelines divide adjacent sum differences by count differences;
+intervals without observations leave gaps. These are observation means, not
+percentiles or individual request traces. GPU timelines require valid GPU samples.
