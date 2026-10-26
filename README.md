@@ -244,7 +244,15 @@ modal:
   memory: 16384
   timeout: 14400
   cache_volume: vllm-bench-model-cache
+  volumes:
+    /fever: kalypso-fever
 ```
+
+`modal.volumes` mounts existing Volumes at absolute container paths. Use it
+when a service needs data that is too large or too expensive to copy into the
+project snapshot. The model cache stays at `/mnt/vllm-bench-cache`; a mount at
+that path is rejected. Missing Volumes fail at startup rather than being
+created silently.
 
 ```bash
 vllm_bench run_scenarios --config modal --benchmark example --scenario '*'
