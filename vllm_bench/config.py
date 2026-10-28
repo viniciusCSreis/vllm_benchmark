@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Name = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]*$")]
 
@@ -45,6 +45,24 @@ class ModalSettings(ConfigModel):
     memory: int = Field(default=16384, gt=0)
     timeout: int = Field(default=14400, gt=0, le=86400)
     cache_volume: str = "vllm-bench-model-cache"
+    volumes: dict[str, str] = Field(default_factory=dict)
+    """Extra existing Volumes, keyed by absolute container mount path."""
+
+    @field_validator("volumes")
+    @classmethod
+    def check_volumes(cls, value):
+        for path, name in value.items():
+            if not path.startswith("/") or path == "/":
+                raise ValueError(f"volume mount path must be absolute: {path!r}")
+            if not name.strip():
+                raise ValueError(f"volume name for {path!r} must not be empty")
+        paths = sorted(value)
+        for first, second in zip(paths, paths[1:]):
+            if second.startswith(first.rstrip("/") + "/"):
+                raise ValueError(
+                    f"volume mount paths must not be nested: {first!r}, {second!r}"
+                )
+        return value
 
 
 class Config(ConfigModel):

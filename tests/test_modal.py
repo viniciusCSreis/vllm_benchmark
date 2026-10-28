@@ -168,7 +168,11 @@ class ModalTests(unittest.TestCase):
             sdk.Sandbox.from_id.return_value = sandbox
             with patch("vllm_bench.providers.modal.modal_sdk", return_value=sdk):
                 provider = ModalProvider(
-                    config(provider="modal", modal={"gpu": "T4:1"}), root
+                    config(
+                        provider="modal",
+                        modal={"gpu": "T4:1", "volumes": {"/fever": "kalypso-fever"}},
+                    ),
+                    root,
                 )
                 provider.app = sdk.App.return_value
                 context, endpoints = provider.start(
@@ -179,7 +183,12 @@ class ModalTests(unittest.TestCase):
                 self.assertIs(creation["app"], provider.app)
                 sdk.App.lookup.assert_not_called()
                 self.assertEqual(creation["gpu"], "T4:1")
-                self.assertEqual(list(creation["volumes"]), ["/mnt/vllm-bench-cache"])
+                self.assertEqual(
+                    list(creation["volumes"]), ["/mnt/vllm-bench-cache", "/fever"]
+                )
+                sdk.Volume.from_name.assert_any_call(
+                    "kalypso-fever", create_if_missing=False
+                )
                 self.assertEqual(
                     creation["env"]["HF_HOME"], "/mnt/vllm-bench-cache/huggingface"
                 )

@@ -65,6 +65,18 @@ class CliTests(unittest.TestCase):
     def tearDown(self):
         bench_util._context.cache_clear()
 
+    def test_modal_volume_mounts_are_absolute_and_not_nested(self):
+        valid = config(modal={"volumes": {"/fever": "kalypso-fever"}})
+        self.assertEqual(valid.modal.volumes, {"/fever": "kalypso-fever"})
+        for volumes in (
+            {"fever": "kalypso-fever"},
+            {"/": "kalypso-fever"},
+            {"/fever": " "},
+            {"/fever": "kalypso-fever", "/fever/indexes": "other"},
+        ):
+            with self.subTest(volumes=volumes), self.assertRaises(ValidationError):
+                config(modal={"volumes": volumes})
+
     def test_config_rejects_unknown_services_and_duplicate_scenarios(self):
         for scenarios in [
             {"test": {"services": ["missing"]}},

@@ -194,6 +194,20 @@ class ModalProvider(Provider):
             "XDG_CACHE_HOME": str(CACHE),
             "NO_PROXY": "*",
         }
+        volumes = {
+            str(CACHE): modal.Volume.from_name(
+                settings.cache_volume, create_if_missing=True
+            )
+        }
+        for path, name in settings.volumes.items():
+            cache = str(CACHE)
+            if (
+                path == cache
+                or path.startswith(cache + "/")
+                or cache.startswith(path.rstrip("/") + "/")
+            ):
+                raise ValueError(f"Volume mount {path} overlaps the model cache")
+            volumes[path] = modal.Volume.from_name(name, create_if_missing=False)
         with modal.enable_output():
             sandbox = modal.Sandbox.create(
                 "python3",
@@ -209,11 +223,7 @@ class ModalProvider(Provider):
                 memory=settings.memory,
                 timeout=settings.timeout,
                 encrypted_ports=[urlsplit(i["url"]).port for i in instances.values()],
-                volumes={
-                    str(CACHE): modal.Volume.from_name(
-                        settings.cache_volume, create_if_missing=True
-                    )
-                },
+                volumes=volumes,
             )
         self.state = {
             "provider": "modal",
