@@ -440,5 +440,10 @@ loading any model or allocating cloud resources.
 
 ## Publishing and license
 
+Run `make release` from a clean `main` branch to bump the patch version, commit
+and push it with a matching tag, and create a GitHub draft release through `gh`.
+Use `make release VERSION=0.2.0` to choose a version. Review and publish the draft
+after CI passes to release it on PyPI.
+
 See [PUBLISHING.md](PUBLISHING.md) for GitHub setup, package checks, and PyPI
 Trusted Publishing. The project uses the [MIT license](LICENSE).

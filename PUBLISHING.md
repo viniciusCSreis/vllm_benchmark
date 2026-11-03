@@ -40,9 +40,9 @@ it does not load a model or allocate cloud GPUs. The build creates a wheel and
 source distribution in `dist/`. Use an empty `dist/` for each release so older
 versions are not uploaded with it.
 
-The version is defined only in `vllm_bench/__init__.py`; the initial release is
-`0.1.0`. Change it before every later release. PyPI does not allow reusing an
-uploaded version's filenames.
+The version is defined only in `vllm_bench/__init__.py`. The release command below
+updates it automatically. PyPI does not allow reusing an uploaded version's
+filenames.
 
 ## Configure PyPI Trusted Publishing
 
@@ -70,18 +70,37 @@ The workflow authenticates with GitHub OIDC, so no PyPI API-token secret is need
 
 ## Publish the release
 
-Wait for CI to pass, then create and push a version tag:
+Install the [GitHub CLI](https://cli.github.com/) and authenticate with
+`gh auth login`. Commit your changes on `main`, then run:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+make release
+# Choose a specific version for a minor or major release:
+make release VERSION=0.2.0
 ```
 
-On GitHub, create and publish a Release using that existing tag. Publishing the
-release triggers `.github/workflows/publish.yml`; pushing a tag alone does not.
-The workflow runs checks, verifies the tag matches the package version, builds
-both distributions, and uploads them to PyPI through the `pypi` environment.
-If you configured environment reviewers, approve the waiting publish job.
+`make release` requires a clean working tree on `main` that includes the latest
+changes from `origin/main`. It fetches tags and chooses the next patch version
+after the highest version in the code or existing `vX.Y.Z` tags. For example,
+code at `0.1.2` with an existing `v0.1.3` tag releases `0.1.4`. An explicit
+`VERSION` must be newer than both the code and existing version tags.
+
+The command updates `vllm_bench/__init__.py`, commits the version change, creates
+an annotated tag, pushes the commit and tag together to `origin`, and uses
+`gh release create --draft --verify-tag --generate-notes` to create a draft.
+It needs only Python 3, Git, and `gh`; use `make release PYTHON=python3.12` to
+choose a Python interpreter.
+
+Open the draft URL printed by `gh`, wait for CI on the release commit to pass,
+review the generated notes, and publish the release. Publishing triggers
+`.github/workflows/publish.yml`; pushing a tag or creating a draft alone does
+not. The workflow runs checks, verifies the tag matches the package version,
+builds both distributions, and uploads them to PyPI through the `pypi`
+environment. If you configured environment reviewers, approve the waiting
+publish job.
+
+If draft creation fails after the push, rerun the printed `gh release create`
+command for that tag to finish creating the draft.
 
 After the workflow succeeds, check installation in a fresh virtual environment:
 
@@ -92,5 +111,4 @@ python3 -m venv /tmp/vllm-benchmark-check
 ```
 
 Users install Modal support with `python -m pip install 'vllm-benchmark[modal]'`.
-For later releases, update the version, commit and push, then repeat with the
-matching `vX.Y.Z` tag and GitHub Release.
+For later releases, commit your changes and run `make release` again.
