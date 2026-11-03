@@ -83,8 +83,9 @@ Cleanup failures preserve recovery state for `down` and stop further scheduling.
 Reports can be regenerated offline.
 
 Every run also generates `reports_v2/report.pdf`, combining two pages per
-benchmark, plus separate chart PNGs under `reports_v2/images/<benchmark>/` and
-per-trial `summary.csv` and `summary.json`. The seven charts compare query
+benchmark, plus separate chart PNGs under `reports_v2/images/<benchmark>/`, each
+PDF page as a PNG under `reports_v2/pages/`, and per-trial `summary.csv` and
+`summary.json`. The seven charts compare query
 latency, prefix-cache hit rate, mean time to first token, logical prompt tokens,
 uncached prefix-query tokens, completed internal LLM requests, and generated
 tokens. Prompt tokens and completed requests are stacked by engine. Scenario
