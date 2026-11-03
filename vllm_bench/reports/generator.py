@@ -13,6 +13,7 @@ from . import (
     runtime,
     throughput,
     tokens,
+    v2,
 )
 from .data import load_data
 
@@ -71,5 +72,6 @@ def generate_reports(result_dir):
     write_csv(data.output / "engines.csv", engines)
     for report in REPORTS:
         report.generate(data)
+    v2.generate(data)
     print(f"Reports: {data.output}", flush=True)
     return data.output

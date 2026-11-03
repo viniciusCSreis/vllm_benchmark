@@ -74,3 +74,33 @@ summed across engines (`queue_peak.png`), and query-weighted cache hit rate
 Histogram timelines divide adjacent sum differences by count differences;
 intervals without observations leave gaps. These are observation means, not
 percentiles or individual request traces. GPU timelines require valid GPU samples.
+
+`reports_v2/` adds a compact comparison report alongside `reports/`:
+
+- `report.pdf`: two pages per benchmark in one combined PDF, with three
+  performance charts and four execution charts.
+- `images/<benchmark>/`: seven separate PNG charts, using the same values and
+  colors as the PDF.
+- `summary.json` and `summary.csv`: derived values for every expected trial,
+  including failed or cancelled trials. JSON also includes per-engine prompt
+  token and completed-request totals for the stacked charts.
+
+The charts cover complete-query latency (`query_latency_sec`), prefix-cache hit
+rate (`cache_hit_pct`), mean time to first token (`ttft_mean_sec`), logical prompt
+tokens (`prompt_tokens`), uncached prefix-query tokens (`uncached_query_tokens`),
+completed internal LLM requests (`requests`), and generated tokens
+(`generation_tokens`). Summary token counts are unscaled; chart axes use millions
+for prompt/uncached tokens and thousands for generated tokens.
+
+Each bar is the arithmetic mean of available successful trials for that scenario
+and benchmark, with individual points when more than one trial is available.
+The `n` under each bar is the number of available successful trials for that
+metric. Missing data is marked `N/A`, including scenarios with no successful
+trials. Cache rates pool hits and queries across engines within each trial.
+Time to first token pools histogram sum/count differences from
+`metrics_before.json` and `metrics_after.json` across all trial engines; missing
+histograms or counter resets leave it unavailable. Uncached prefix-query tokens
+are cache queries minus cache hits. Logical prompt tokens include cached tokens.
+Query latency uses saved `latency_sec`, including its runtime fallback when no
+benchmark response supplied a latency. Reported output rows describe completion
+and do not establish result quality.

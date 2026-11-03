@@ -82,6 +82,18 @@ Failures retain partial results and continue; Ctrl+C stops the experiment.
 Cleanup failures preserve recovery state for `down` and stop further scheduling.
 Reports can be regenerated offline.
 
+Every run also generates `reports_v2/report.pdf`, combining two pages per
+benchmark, plus separate chart PNGs under `reports_v2/images/<benchmark>/` and
+per-trial `summary.csv` and `summary.json`. The seven charts compare query
+latency, prefix-cache hit rate, mean time to first token, logical prompt tokens,
+uncached prefix-query tokens, completed internal LLM requests, and generated
+tokens. Prompt tokens and completed requests are stacked by engine. Scenario
+bars average successful trials; repeated trials appear as individual points.
+The existing `reports/` output is still generated.
+
+Use `vllm_bench report <run-directory>` to regenerate both report folders from
+saved results without starting services.
+
 `--current-dir /path/to/project` works before or after any command and sets the
 root for config lookup, scripts, snapshots, runtime state, and results. Relative
 report paths also resolve from this root. `--config` works before or after `up`

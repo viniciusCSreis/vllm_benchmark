@@ -126,7 +126,10 @@ def main():
         "--dataset-path",
         help="Existing dataset path visible to the services (passed to the benchmark)",
     )
-    report = commands.add_parser("report", help="Regenerate reports from saved files")
+    report = commands.add_parser(
+        "report",
+        help="Regenerate reports and reports_v2 (PDF and PNGs) from saved files",
+    )
     report.add_argument("directory", type=Path)
     for command in [up, down, run, single, report]:
         command.add_argument(
