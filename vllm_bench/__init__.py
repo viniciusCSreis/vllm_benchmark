@@ -4,4 +4,4 @@ from .enviroment import Environment, Service, enviroment
 
 __all__ = ["Environment", "Service", "enviroment"]
 
-__version__ = "0.1.2"
+__version__ = "0.1.4"
