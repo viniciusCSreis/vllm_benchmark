@@ -96,6 +96,10 @@ class ReportTests(unittest.TestCase):
             output = root / "reports_v2"
             self.assertTrue((output / "report.pdf").read_bytes().startswith(b"%PDF-"))
             self.assertTrue((output / "summary.csv").is_file())
+            self.assertEqual(
+                sorted(path.name for path in (output / "pages").glob("*.png")),
+                ["page_01.png", "page_02.png", "page_03.png", "page_04.png"],
+            )
             rows = json.loads((output / "summary.json").read_text())
             self.assertEqual(
                 [row["status"] for row in rows], ["ok", "ok", "failed", "ok"]

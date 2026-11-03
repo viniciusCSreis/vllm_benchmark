@@ -81,6 +81,8 @@ percentiles or individual request traces. GPU timelines require valid GPU sample
   performance charts and four execution charts.
 - `images/<benchmark>/`: seven separate PNG charts, using the same values and
   colors as the PDF.
+- `pages/page_NN.png`: each page of `report.pdf` as a 200 dpi PNG, numbered as
+  in the PDF, for documents that cannot embed a PDF.
 - `summary.json` and `summary.csv`: derived values for every expected trial,
   including failed or cancelled trials. JSON also includes per-engine prompt
   token and completed-request totals for the stacked charts.

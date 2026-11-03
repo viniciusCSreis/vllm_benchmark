@@ -278,6 +278,8 @@ def generate(data):
         name: COLORS[i % len(COLORS)] for i, name in enumerate(scenarios)
     }
     manifest = read_json(data.root / "run.json")
+    pages = output / "pages"
+    pages.mkdir(exist_ok=True)
     with mpl.rc_context({"font.family": "DejaVu Sans", "pdf.fonttype": 42}):
         with PdfPages(
             output / "report.pdf",
@@ -317,12 +319,13 @@ def generate(data):
                         ("Execution and result validity", CHARTS[3:]),
                     ]
                 ):
+                    number = index * 2 + offset + 1
                     figure, axes = page(
                         data,
                         benchmark,
                         records,
                         title,
-                        index * 2 + offset + 1,
+                        number,
                         len(benchmarks) * 2,
                         manifest,
                     )
@@ -331,5 +334,8 @@ def generate(data):
                     if offset == 0:
                         figure.delaxes(figure.axes[3])
                     pdf.savefig(figure)
+                    # The same page as an image, for documents that cannot
+                    # embed a PDF.
+                    figure.savefig(pages / f"page_{number:02d}.png", dpi=200)
                     figure.clear()
     print(f"Reports v2: {output}", flush=True)
