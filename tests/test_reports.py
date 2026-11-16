@@ -6,10 +6,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from matplotlib.figure import Figure
+
 from vllm_bench.cli import main
 from vllm_bench.contracts import Trial, TrialResult
 from vllm_bench.reports.data import ReportData
-from vllm_bench.reports.v2 import trial_rows
+from vllm_bench.reports.v2 import draw_worker_cache, trial_rows
 
 
 class ReportTests(unittest.TestCase):
@@ -55,6 +57,13 @@ class ReportTests(unittest.TestCase):
             data = ReportData(root, root / "reports", [record])
             row = trial_rows(data)[0]
             self.assertEqual(row["cache_hit_pct"], 54)
+            axis = Figure().subplots()
+            draw_worker_cache(
+                axis, {"distributed": [row]}, {"leader": "blue", "worker": "red"}
+            )
+            self.assertEqual(
+                [text.get_text() for text in axis.texts], ["90.0%", "50.0%"]
+            )
             self.assertEqual(row["uncached_query_tokens"], 460)
             self.assertEqual(row["ttft_mean_sec"], 9.2)
             self.assertEqual(row["prompt_tokens"], 1000)
@@ -114,6 +123,7 @@ class ReportTests(unittest.TestCase):
                     {
                         "query_latency_sec",
                         "cache_hit_pct",
+                        "cache_hit_pct_by_worker",
                         "ttft_mean_sec",
                         "prompt_tokens",
                         "uncached_query_tokens",

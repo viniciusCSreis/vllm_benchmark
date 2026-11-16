@@ -2,12 +2,14 @@
 
 import csv
 import json
+import re
 from statistics import mean
 from textwrap import fill
 
 import matplotlib as mpl
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
+from matplotlib.ticker import FuncFormatter
 
 from ..metrics import difference
 from .data import engine_total
@@ -19,19 +21,20 @@ COLORS = ["#7C8795", "#4C78A8", "#24968D", "#B78037", "#8B6BA6", "#C36E64"]
 ENGINE_COLORS = COLORS[1:] + COLORS[:1]
 CHARTS = [
     ("query_latency_sec", "Complete-query latency", "Seconds", 1),
-    ("cache_hit_pct", "Prefix-cache hit rate", "Percent of queried tokens", 1),
+    ("cache_hit_pct", "Cache hit rate (weighted mean)", "Percent of queried tokens", 1),
     ("ttft_mean_sec", "Mean time to first token", "Seconds per request", 1),
-    ("prompt_tokens", "Logical prompt-token volume", "Millions of tokens", 1e6),
+    ("prompt_tokens", "Input token volume", "Tokens", 1e6),
     (
         "uncached_query_tokens",
         "Uncached prefix-query tokens",
-        "Millions of tokens",
+        "Tokens",
         1e6,
     ),
     ("requests", "Completed internal LLM requests", "Requests", 1),
-    ("generation_tokens", "Generated-token volume", "Thousands of tokens", 1e3),
+    ("generation_tokens", "Output (generated) token volume", "Tokens", 1e3),
+    ("cache_hit_pct_by_worker", "Cache hit rate by worker", "Percent", 1),
 ]
-STACKED = {"prompt_tokens", "requests"}
+STACKED = {"prompt_tokens", "requests", "generation_tokens"}
 
 
 def read_json(path):
@@ -91,7 +94,14 @@ def trial_rows(data):
             generation_tokens=engine_total(record, "generation_tokens"),
             engines={
                 engine["engine"]: {
-                    key: engine.get(key) for key in ["prompt_tokens", "requests"]
+                    key: engine.get(key)
+                    for key in [
+                        "prompt_tokens",
+                        "requests",
+                        "generation_tokens",
+                        "cache_hits",
+                        "cache_queries",
+                    ]
                 }
                 for engine in record["engines"]
             },
@@ -108,9 +118,68 @@ def format_value(value):
     return f"{value:,.3f}".rstrip("0").rstrip(".")
 
 
-def draw_chart(axis, chart, groups, scenario_colors, engine_colors):
+def format_tokens(value):
+    for scale, suffix in [(1e6, "M"), (1e3, "k")]:
+        if abs(value) >= scale:
+            return f"{value / scale:.3g}{suffix}"
+    return format_value(value)
+
+
+def engine_sort_key(name):
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
+
+
+def engine_handles(engine_colors):
+    return [
+        mpl.patches.Patch(color=color, label=engine)
+        for engine, color in engine_colors.items()
+    ]
+
+
+def draw_worker_cache(axis, groups, engine_colors):
+    """Show independent hit rates, which do not add up to 100 percent."""
+    engines = list(engine_colors)
+    if not engines:
+        axis.text(0.5, 0.5, "N/A", ha="center", va="center", transform=axis.transAxes)
+        axis.set_axis_off()
+        return
+    values = []
+    for engine in engines:
+        rates = []
+        for rows in groups.values():
+            trials = []
+            for row in rows:
+                metrics = row["engines"].get(engine, {})
+                hits, queries = metrics.get("cache_hits"), metrics.get("cache_queries")
+                if row["status"] == "ok" and hits is not None and queries:
+                    trials.append(100 * hits / queries)
+            rates.append(mean(trials) if trials else float("nan"))
+        values.append(rates)
+    palette = mpl.colormaps["YlGnBu"].with_extremes(bad="#E4E8EB")
+    axis.imshow(values, cmap=palette, vmin=0, vmax=100, aspect="auto")
+    axis.set_xticks(range(len(groups)), [label(name) for name in groups])
+    axis.set_yticks(range(len(engines)), engines)
+    axis.tick_params(axis="both", length=0, labelsize=7, pad=5)
+    axis.spines[:].set_visible(False)
+    for y, rates in enumerate(values):
+        for x, rate in enumerate(rates):
+            axis.text(
+                x,
+                y,
+                f"{rate:.1f}%" if rate == rate else "N/A",
+                ha="center",
+                va="center",
+                fontsize=7,
+                color="white" if rate > 50 else INK,
+            )
+
+
+def draw_chart(axis, chart, groups, scenario_colors, engine_colors, show_legend=True):
     key, title, unit, scale = chart
     axis.set_title(title, loc="left", color=INK, weight="bold", fontsize=10, pad=16)
+    if key == "cache_hit_pct_by_worker":
+        draw_worker_cache(axis, groups, engine_colors)
+        return
     axis.set_ylabel(unit, fontsize=9)
     axis.spines[["top", "right"]].set_visible(False)
     axis.spines[["left", "bottom"]].set_color("#A5AFB7")
@@ -118,6 +187,10 @@ def draw_chart(axis, chart, groups, scenario_colors, engine_colors):
     axis.grid(axis="y", color="#E4E8EB", linewidth=0.7)
     axis.tick_params(axis="both", labelsize=8, length=0, pad=5)
     axis.ticklabel_format(axis="y", style="plain", useOffset=False)
+    if key.endswith("tokens"):
+        axis.yaxis.set_major_formatter(
+            FuncFormatter(lambda value, position: format_tokens(value * scale))
+        )
     labels, annotations, maximum = [], [], 0
     for index, (scenario, rows) in enumerate(groups.items()):
         trials = [r for r in rows if r["status"] == "ok" and r[key] is not None]
@@ -142,6 +215,18 @@ def draw_chart(axis, chart, groups, scenario_colors, engine_colors):
                     row["engines"].get(engine, {}).get(key, 0) / scale for row in trials
                 )
                 axis.bar(index, height, bottom=bottom, color=color, width=0.64)
+                if height > 0 and value > 0:
+                    red, green, blue = mpl.colors.to_rgb(color)
+                    brightness = 0.299 * red + 0.587 * green + 0.114 * blue
+                    axis.text(
+                        index,
+                        bottom + height / 2,
+                        f"{100 * height / value:.1f}%",
+                        ha="center",
+                        va="center",
+                        color=INK if brightness > 0.6 else "white",
+                        fontsize=7,
+                    )
                 bottom += height
         else:
             axis.bar(index, value, color=scenario_colors[scenario], width=0.64)
@@ -170,21 +255,21 @@ def draw_chart(axis, chart, groups, scenario_colors, engine_colors):
         axis.text(
             index,
             value + upper * 0.025,
-            format_value(value),
+            format_tokens(value * scale)
+            if key.endswith("tokens")
+            else f"{value:.2f}%"
+            if key == "cache_hit_pct"
+            else format_value(value),
             ha="center",
             color=INK,
             fontsize=8.5,
         )
-    if key in STACKED and annotations:
-        handles = [
-            mpl.patches.Patch(color=color, label=engine)
-            for engine, color in engine_colors.items()
-        ]
+    if key in STACKED and annotations and show_legend:
         axis.legend(
-            handles=handles,
-            loc="lower left",
-            bbox_to_anchor=(0, 1.01),
-            ncol=min(3, len(handles)),
+            handles=engine_handles(engine_colors),
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1),
+            ncol=1,
             frameon=False,
             fontsize=7,
             borderaxespad=0,
@@ -292,11 +377,16 @@ def generate(data):
                 records = [r for r in data.records if r["benchmark"] == benchmark]
                 selected = [row for row in rows if row["benchmark"] == benchmark]
                 engines = sorted(
-                    {engine for row in selected for engine in row["engines"]}
+                    {engine for row in selected for engine in row["engines"]},
+                    key=engine_sort_key,
+                )
+                palette = (
+                    ENGINE_COLORS
+                    if len(engines) <= len(ENGINE_COLORS)
+                    else list(mpl.colormaps["tab20"].colors)
                 )
                 engine_colors = {
-                    name: ENGINE_COLORS[i % len(ENGINE_COLORS)]
-                    for i, name in enumerate(engines)
+                    name: palette[i % len(palette)] for i, name in enumerate(engines)
                 }
                 groups = {
                     scenario: [r for r in selected if r["scenario"] == scenario]
@@ -306,7 +396,14 @@ def generate(data):
                 images.mkdir(parents=True, exist_ok=True)
                 for chart in CHARTS:
                     figure = Figure(
-                        figsize=(max(6, len(groups) * 1.25), 4.6), layout="constrained"
+                        figsize=(
+                            max(6, len(groups) * 1.25)
+                            + (1.4 if chart[0] in STACKED else 0),
+                            max(4.6, len(engines) * 0.22 + 1)
+                            if chart[0] in STACKED
+                            else 4.6,
+                        ),
+                        layout="constrained",
                     )
                     draw_chart(
                         figure.subplots(), chart, groups, scenario_colors, engine_colors
@@ -315,8 +412,8 @@ def generate(data):
                     figure.clear()
                 for offset, (title, charts) in enumerate(
                     [
-                        ("Coordinator performance", CHARTS[:3]),
-                        ("Execution and result validity", CHARTS[3:]),
+                        ("Coordinator performance", CHARTS[:3] + CHARTS[7:]),
+                        ("Execution and result validity", CHARTS[3:7]),
                     ]
                 ):
                     number = index * 2 + offset + 1
@@ -329,10 +426,28 @@ def generate(data):
                         len(benchmarks) * 2,
                         manifest,
                     )
+                    if offset == 1 and engine_colors:
+                        legend_rows = (len(engine_colors) + 3) // 4
+                        figure.legend(
+                            handles=engine_handles(engine_colors),
+                            loc="upper left",
+                            bbox_to_anchor=(0.105, 0.805),
+                            ncol=4,
+                            frameon=False,
+                            fontsize=8,
+                            borderaxespad=0,
+                            handlelength=1,
+                        )
+                        figure.subplots_adjust(top=0.735 - legend_rows * 0.022)
                     for axis, chart in zip(axes, charts):
-                        draw_chart(axis, chart, groups, scenario_colors, engine_colors)
-                    if offset == 0:
-                        figure.delaxes(figure.axes[3])
+                        draw_chart(
+                            axis,
+                            chart,
+                            groups,
+                            scenario_colors,
+                            engine_colors,
+                            show_legend=False,
+                        )
                     pdf.savefig(figure)
                     # The same page as an image, for documents that cannot
                     # embed a PDF.
